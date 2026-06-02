@@ -38,6 +38,8 @@ export interface ScanResult {
   finishedAt: string;
   filesScanned: number;
   findings: Finding[];
+  /** Number of findings suppressed via .scannerignore or inline scanner-ignore comments. */
+  suppressedCount: number;
 }
 
 /** Returns true if `severity` is at or above `threshold` in SEVERITY_ORDER. */

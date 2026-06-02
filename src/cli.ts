@@ -28,11 +28,13 @@ program
   .option("--skip-deps", "skip the dependency vulnerability check (no network)", false)
   .option("--include-test-dirs", "scan test/, examples/, fixtures/ etc. (excluded by default)", false)
   .option("--exclude <dirs>", "comma-separated list of additional directory names to exclude")
+  .option("--no-ignore", "disable .scannerignore and inline scanner-ignore comments (show all findings)")
   .action(async (targetPath: string, opts) => {
     const result = await scan(targetPath, {
       skipDependencies: opts.skipDeps,
       includeTestDirs: opts.includeTestDirs,
       excludeDirs: opts.exclude ? (opts.exclude as string).split(",").map((d: string) => d.trim()) : [],
+      noIgnore: opts.ignore === false,
     });
 
     // --format selects the encoder; --output selects the destination. The two

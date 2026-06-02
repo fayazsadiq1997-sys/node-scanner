@@ -4,6 +4,7 @@ import type { Finding, ScanResult } from "./types";
 import { scanSecrets } from "./checks/secrets";
 import { scanMisconfigs } from "./checks/misconfigs";
 import { scanDependencies } from "./checks/dependencies";
+import { loadIgnoreFile, applySuppressions } from "./suppression";
 
 /** Directories never worth scanning — build output, tooling, etc. */
 const IGNORED_DIRS = new Set([
@@ -66,6 +67,11 @@ export interface ScanOptions {
   includeTestDirs?: boolean;
   /** Additional directory names to exclude (basename match). */
   excludeDirs?: string[];
+  /**
+   * Disable suppression: ignore .scannerignore and inline scanner-ignore comments.
+   * Useful for auditing what a suppression file is hiding.
+   */
+  noIgnore?: boolean;
 }
 
 async function* walk(
@@ -98,6 +104,12 @@ export async function scan(
   const findings: Finding[] = [];
   let filesScanned = 0;
 
+  // Load .scannerignore once up front (empty if file absent or noIgnore is set).
+  const ignoreRules = options.noIgnore ? [] : await loadIgnoreFile(absRoot);
+
+  // Track each file's lines for inline scanner-ignore comment matching.
+  const fileLines = new Map<string, string[]>();
+
   const skipDirs = new Set([
     ...IGNORED_DIRS,
     ...(options.includeTestDirs ? [] : NON_PRODUCTION_DIRS),
@@ -125,6 +137,12 @@ export async function scan(
     }
 
     const relPath = path.relative(absRoot, file).split(path.sep).join("/");
+
+    // Store lines for inline suppression checks.
+    if (!options.noIgnore) {
+      fileLines.set(relPath, content.split(/\r?\n/));
+    }
+
     findings.push(...scanSecrets(relPath, content));
     findings.push(...scanMisconfigs(relPath, content));
     filesScanned++;
@@ -138,11 +156,17 @@ export async function scan(
     }
   }
 
+  // Apply .scannerignore and inline scanner-ignore suppressions.
+  const { kept, suppressedCount } = options.noIgnore
+    ? { kept: findings, suppressedCount: 0 }
+    : applySuppressions(findings, ignoreRules, fileLines);
+
   return {
     root: absRoot,
     startedAt,
     finishedAt: new Date().toISOString(),
     filesScanned,
-    findings,
+    findings: kept,
+    suppressedCount,
   };
 }

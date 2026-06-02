@@ -23,7 +23,11 @@ export function reportTerminal(result: ScanResult): void {
 
   if (findings.length === 0) {
     console.log(pc.green("\n✔ No issues found."));
-    console.log(pc.gray(`  Scanned ${filesScanned} files.\n`));
+    console.log(pc.gray(`  Scanned ${filesScanned} files.`));
+    if (result.suppressedCount > 0) {
+      console.log(pc.gray(`  ${result.suppressedCount} finding(s) suppressed via .scannerignore or inline scanner-ignore comments.`));
+    }
+    console.log("");
     return;
   }
 
@@ -49,7 +53,11 @@ export function reportTerminal(result: ScanResult): void {
 
   console.log(pc.gray("─".repeat(50)));
   console.log(`${pc.bold(String(findings.length))} findings   ${summary}`);
-  console.log(pc.gray(`Scanned ${filesScanned} files.\n`));
+  console.log(pc.gray(`Scanned ${filesScanned} files.`));
+  if (result.suppressedCount > 0) {
+    console.log(pc.gray(`${result.suppressedCount} finding(s) suppressed via .scannerignore or inline scanner-ignore comments.`));
+  }
+  console.log("");
 }
 
 function printFinding(f: Finding): void {
