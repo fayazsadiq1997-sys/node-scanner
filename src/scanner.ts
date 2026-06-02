@@ -5,6 +5,7 @@ import { scanSecrets } from "./checks/secrets";
 import { scanMisconfigs } from "./checks/misconfigs";
 import { scanDependencies } from "./checks/dependencies";
 import { loadIgnoreFile, applySuppressions } from "./suppression";
+import { getChangedFiles } from "./git";
 
 /** Directories never worth scanning — build output, tooling, etc. */
 const IGNORED_DIRS = new Set([
@@ -60,6 +61,19 @@ const SCANNABLE_EXT = new Set([
 /** Skip files larger than this to avoid choking on bundles/minified blobs. */
 const MAX_FILE_BYTES = 1_000_000;
 
+/**
+ * Manifest files that, when changed, justify re-running the dependency check
+ * in --diff mode. Matched by basename so a manifest in any changed directory
+ * triggers it.
+ */
+const MANIFEST_FILES = new Set([
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "yarn.lock",
+  "pnpm-lock.yaml",
+]);
+
 export interface ScanOptions {
   /** Skip the network-dependent dependency check. */
   skipDependencies?: boolean;
@@ -72,6 +86,13 @@ export interface ScanOptions {
    * Useful for auditing what a suppression file is hiding.
    */
   noIgnore?: boolean;
+  /**
+   * Restrict the scan to files changed in git. `base` is the ref to diff
+   * against (e.g. "main", "origin/main"); when omitted, uncommitted
+   * working-tree changes (plus untracked files) are scanned. Presence of this
+   * object enables diff mode.
+   */
+  diff?: { base?: string };
 }
 
 async function* walk(
@@ -103,6 +124,12 @@ export async function scan(
   const absRoot = path.resolve(root);
   const findings: Finding[] = [];
   let filesScanned = 0;
+
+  // In --diff mode, resolve the set of changed files once up front. A null set
+  // means diff mode is off and every walked file is eligible.
+  const changedFiles = options.diff
+    ? await getChangedFiles(absRoot, options.diff.base)
+    : null;
 
   // Load .scannerignore once up front (empty if file absent or noIgnore is set).
   const ignoreRules = options.noIgnore ? [] : await loadIgnoreFile(absRoot);
@@ -138,6 +165,9 @@ export async function scan(
 
     const relPath = path.relative(absRoot, file).split(path.sep).join("/");
 
+    // In diff mode, skip files that haven't changed.
+    if (changedFiles && !changedFiles.has(relPath)) continue;
+
     // Store lines for inline suppression checks.
     if (!options.noIgnore) {
       fileLines.set(relPath, content.split(/\r?\n/));
@@ -148,7 +178,13 @@ export async function scan(
     filesScanned++;
   }
 
-  if (!options.skipDependencies) {
+  // In diff mode, only re-run the dependency check when a manifest/lockfile is
+  // among the changed files — otherwise the dependency tree is unchanged.
+  const manifestChanged =
+    !changedFiles ||
+    [...changedFiles].some((f) => MANIFEST_FILES.has(f.split("/").pop() ?? ""));
+
+  if (!options.skipDependencies && manifestChanged) {
     try {
       findings.push(...(await scanDependencies(absRoot)));
     } catch {

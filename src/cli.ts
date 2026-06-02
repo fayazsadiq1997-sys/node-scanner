@@ -29,12 +29,24 @@ program
   .option("--include-test-dirs", "scan test/, examples/, fixtures/ etc. (excluded by default)", false)
   .option("--exclude <dirs>", "comma-separated list of additional directory names to exclude")
   .option("--no-ignore", "disable .scannerignore and inline scanner-ignore comments (show all findings)")
+  .option(
+    "--diff [ref]",
+    "scan only files changed vs <ref> (e.g. main); with no ref, scan uncommitted working-tree changes",
+  )
   .action(async (targetPath: string, opts) => {
+    // --diff is absent (undefined), present without a value (true), or present
+    // with a ref (string). Map that to the scanner's diff option.
+    const diff =
+      opts.diff === undefined
+        ? undefined
+        : { base: typeof opts.diff === "string" ? opts.diff : undefined };
+
     const result = await scan(targetPath, {
       skipDependencies: opts.skipDeps,
       includeTestDirs: opts.includeTestDirs,
       excludeDirs: opts.exclude ? (opts.exclude as string).split(",").map((d: string) => d.trim()) : [],
       noIgnore: opts.ignore === false,
+      diff,
     });
 
     // --format selects the encoder; --output selects the destination. The two
