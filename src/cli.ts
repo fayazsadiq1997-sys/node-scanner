@@ -4,6 +4,7 @@ import pc from "picocolors";
 import { scan } from "./scanner";
 import { reportTerminal } from "./reporters/terminal";
 import { reportJson } from "./reporters/json";
+import { reportSarif } from "./reporters/sarif";
 import { meetsThreshold, type Severity } from "./types";
 
 const program = new Command();
@@ -18,8 +19,8 @@ program
 program
   .command("scan")
   .argument("[path]", "directory to scan", ".")
-  .option("-f, --format <format>", "output format: terminal | json", "terminal")
-  .option("-o, --output <file>", "write report to a file (json format)")
+  .option("-f, --format <format>", "output format: terminal | json | sarif", "terminal")
+  .option("-o, --output <file>", "write the report to a file instead of stdout")
   .option(
     "--fail-on <severity>",
     "exit with code 1 if any finding is at or above this severity (critical|high|medium|low)",
@@ -34,10 +35,29 @@ program
       excludeDirs: opts.exclude ? (opts.exclude as string).split(",").map((d: string) => d.trim()) : [],
     });
 
-    if (opts.format === "json" || opts.output) {
-      await reportJson(result, opts.output);
-    } else {
-      reportTerminal(result);
+    // --format selects the encoder; --output selects the destination. The two
+    // are independent, except that the colourised terminal format is not
+    // meaningful written to a file.
+    const format = (opts.format as string).toLowerCase();
+    switch (format) {
+      case "terminal":
+        if (opts.output) {
+          throw new Error(
+            "terminal format cannot be written to a file; use --format json or --format sarif with --output",
+          );
+        }
+        reportTerminal(result);
+        break;
+      case "json":
+        await reportJson(result, opts.output);
+        break;
+      case "sarif":
+        await reportSarif(result, opts.output);
+        break;
+      default:
+        throw new Error(
+          `unknown format '${opts.format}'; expected terminal | json | sarif`,
+        );
     }
 
     if (opts.failOn) {

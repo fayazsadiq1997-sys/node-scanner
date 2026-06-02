@@ -28,12 +28,22 @@ npm run dev -- scan ./tests/fixtures/vulnerable-app
 # JSON output for CI pipelines
 npm run dev -- scan . --format json --output report.json
 
+# SARIF output for GitHub Code Scanning (upload to the Security tab)
+npm run dev -- scan . --format sarif --output results.sarif
+
 # Skip the network-dependent dependency check
 npm run dev -- scan . --skip-deps
 
 # Fail the build (exit 1) if anything high or above is found — for CI
 npm run dev -- scan . --fail-on high
 ```
+
+`--format` and `--output` are independent: `--format` chooses the encoder
+(`terminal`, `json`, or `sarif`) and `--output` chooses the destination (a file,
+or stdout when omitted). `--format json`/`sarif` print to stdout if no
+`--output` is given; the colourised `terminal` format cannot be written to a
+file. (Earlier versions inferred JSON from `--output` alone — that shortcut was
+removed, so always pair `--output` with an explicit `--format`.)
 
 After `npm run build`, the compiled CLI is runnable as `node dist/cli.js scan .`.
 
@@ -43,17 +53,17 @@ After `npm run build`, the compiled CLI is runnable as `node dist/cli.js scan .`
 |-------|-----------|--------|
 | Secrets | Rule-driven regex with redacted output | `src/checks/secrets.ts` |
 | Dependencies | OSV.dev REST API, exact versions from `package-lock.json` | `src/checks/dependencies.ts` |
-| Misconfigurations | Line-based regex (AST upgrade planned) | `src/checks/misconfigs.ts` |
+| Misconfigurations | AST via `@typescript-eslint/parser` (insecure-http remains regex) | `src/checks/misconfigs.ts` |
 
 The file walker skips `node_modules`, `.git`, `dist`, and other build output, and
 ignores files over 1 MB.
 
 ## Roadmap
 
-- [ ] AST-based misconfig checks via `@typescript-eslint/parser` (fewer false positives)
-- [ ] SARIF output for GitHub Code Scanning
-- [ ] Entropy-based detection for unknown secret formats
+- [x] AST-based misconfig checks via `@typescript-eslint/parser` (fewer false positives)
+- [x] SARIF output for GitHub Code Scanning
 - [ ] GitHub Actions workflow that runs the scanner on itself
+- [ ] Entropy-based detection for unknown secret formats
 
 ## License
 
