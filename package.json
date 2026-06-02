@@ -1,0 +1,39 @@
+{
+  "name": "node-sec-scanner",
+  "version": "0.1.0",
+  "description": "A security scanner for Node.js projects — detects hardcoded secrets, vulnerable dependencies, and dangerous misconfigurations.",
+  "bin": {
+    "node-sec-scanner": "dist/cli.js"
+  },
+  "main": "dist/cli.js",
+  "scripts": {
+    "build": "tsc",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "scan": "tsx src/cli.ts scan",
+    "test": "tsx --test tests/**/*.test.ts"
+  },
+  "keywords": [
+    "security",
+    "scanner",
+    "appsec",
+    "secrets",
+    "sast",
+    "nodejs"
+  ],
+  "author": "Fayaz Sadiq",
+  "license": "MIT",
+  "type": "commonjs",
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "commander": "^12.1.0",
+    "picocolors": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2"
+  }
+}
