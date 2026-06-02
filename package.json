@@ -11,7 +11,7 @@
     "dev": "tsx src/cli.ts",
     "start": "node dist/cli.js",
     "scan": "tsx src/cli.ts scan",
-    "test": "tsx --test tests/**/*.test.ts"
+    "test": "tsx --test \"tests/**/*.test.ts\""
   },
   "keywords": [
     "security",
