@@ -25,8 +25,14 @@ program
     "exit with code 1 if any finding is at or above this severity (critical|high|medium|low)",
   )
   .option("--skip-deps", "skip the dependency vulnerability check (no network)", false)
+  .option("--include-test-dirs", "scan test/, examples/, fixtures/ etc. (excluded by default)", false)
+  .option("--exclude <dirs>", "comma-separated list of additional directory names to exclude")
   .action(async (targetPath: string, opts) => {
-    const result = await scan(targetPath, { skipDependencies: opts.skipDeps });
+    const result = await scan(targetPath, {
+      skipDependencies: opts.skipDeps,
+      includeTestDirs: opts.includeTestDirs,
+      excludeDirs: opts.exclude ? (opts.exclude as string).split(",").map((d: string) => d.trim()) : [],
+    });
 
     if (opts.format === "json" || opts.output) {
       await reportJson(result, opts.output);

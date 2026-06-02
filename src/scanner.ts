@@ -5,7 +5,7 @@ import { scanSecrets } from "./checks/secrets";
 import { scanMisconfigs } from "./checks/misconfigs";
 import { scanDependencies } from "./checks/dependencies";
 
-/** Directories never worth scanning. */
+/** Directories never worth scanning — build output, tooling, etc. */
 const IGNORED_DIRS = new Set([
   "node_modules",
   ".git",
@@ -14,6 +14,31 @@ const IGNORED_DIRS = new Set([
   "coverage",
   ".next",
   ".cache",
+]);
+
+/**
+ * Non-production directories excluded by default to reduce false positives.
+ * Findings in test/example code are almost always false positives — hardcoded
+ * credentials in fixtures, eval() in test payloads, http:// in demo scripts.
+ * Users can opt back in with --include-test-dirs.
+ */
+const NON_PRODUCTION_DIRS = new Set([
+  "test",
+  "tests",
+  "__tests__",
+  "spec",
+  "specs",
+  "examples",
+  "example",
+  "demo",
+  "demos",
+  "sample",
+  "samples",
+  "fixtures",
+  "__mocks__",
+  "mocks",
+  "stubs",
+  "e2e",
 ]);
 
 /** File extensions we read for content-based checks. */
@@ -37,9 +62,16 @@ const MAX_FILE_BYTES = 1_000_000;
 export interface ScanOptions {
   /** Skip the network-dependent dependency check. */
   skipDependencies?: boolean;
+  /** Include test/example/fixture directories (excluded by default). */
+  includeTestDirs?: boolean;
+  /** Additional directory names to exclude (basename match). */
+  excludeDirs?: string[];
 }
 
-async function* walk(dir: string): AsyncGenerator<string> {
+async function* walk(
+  dir: string,
+  opts: { skipDirs: Set<string> },
+): AsyncGenerator<string> {
   let entries;
   try {
     entries = await readdir(dir, { withFileTypes: true });
@@ -49,8 +81,8 @@ async function* walk(dir: string): AsyncGenerator<string> {
   for (const entry of entries) {
     const full = path.join(dir, entry.name);
     if (entry.isDirectory()) {
-      if (IGNORED_DIRS.has(entry.name)) continue;
-      yield* walk(full);
+      if (opts.skipDirs.has(entry.name)) continue;
+      yield* walk(full, opts);
     } else if (entry.isFile()) {
       yield full;
     }
@@ -66,7 +98,13 @@ export async function scan(
   const findings: Finding[] = [];
   let filesScanned = 0;
 
-  for await (const file of walk(absRoot)) {
+  const skipDirs = new Set([
+    ...IGNORED_DIRS,
+    ...(options.includeTestDirs ? [] : NON_PRODUCTION_DIRS),
+    ...(options.excludeDirs ?? []),
+  ]);
+
+  for await (const file of walk(absRoot, { skipDirs })) {
     const ext = path.extname(file).toLowerCase();
     const base = path.basename(file);
     // Read source/config files and any dotenv-style file.
