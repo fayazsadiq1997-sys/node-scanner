@@ -1,0 +1,53 @@
+name: Security scan
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+  schedule:
+    # Weekly run catches newly-disclosed CVEs in dependencies over time.
+    - cron: "0 6 * * 1"
+
+# Least privilege: read the code, write Code Scanning results.
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  scan:
+    name: Build, test, and self-scan
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      # Build and tests gate the pipeline — a broken build or failing test
+      # fails the job. Scan findings themselves do not (report-only).
+      - name: Build
+        run: npm run build
+
+      - name: Test
+        run: npm test
+
+      # Self-scan, including the OSV.dev dependency check. No --fail-on, so the
+      # scanner exits 0 regardless of findings; SARIF is the output of record.
+      - name: Run security scan
+        run: node dist/cli.js scan . --format sarif --output results.sarif
+
+      # always() so findings still reach the Security tab even if an earlier
+      # step failed. Note: PRs from forks lack security-events:write, so upload
+      # is skipped there — not a concern for this single-owner repo.
+      - name: Upload SARIF to code scanning
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
