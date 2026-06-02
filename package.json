@@ -33,6 +33,8 @@
   },
   "devDependencies": {
     "@types/node": "^22.10.2",
+    "@typescript-eslint/parser": "^8.60.1",
+    "@typescript-eslint/types": "^8.60.1",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
