@@ -193,8 +193,8 @@ export async function scan(
   }
 
   // Apply .scannerignore and inline scanner-ignore suppressions.
-  const { kept, suppressedCount } = options.noIgnore
-    ? { kept: findings, suppressedCount: 0 }
+  const { kept, suppressedFindings } = options.noIgnore
+    ? { kept: findings, suppressedFindings: [] }
     : applySuppressions(findings, ignoreRules, fileLines);
 
   return {
@@ -203,6 +203,7 @@ export async function scan(
     finishedAt: new Date().toISOString(),
     filesScanned,
     findings: kept,
-    suppressedCount,
+    suppressedFindings,
+    suppressedCount: suppressedFindings.length,
   };
 }

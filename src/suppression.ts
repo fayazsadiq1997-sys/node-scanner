@@ -1,6 +1,6 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
-import type { Finding } from "./types";
+import type { Finding, SuppressedFinding } from "./types";
 
 /**
  * Suppression support — two mechanisms:
@@ -140,11 +140,11 @@ function isInlineSuppressed(finding: Finding, lines: string[]): boolean {
 
 export interface SuppressionResult {
   kept: Finding[];
-  suppressedCount: number;
+  suppressedFindings: SuppressedFinding[];
 }
 
 /**
- * Filters out suppressed findings.
+ * Filters out suppressed findings and returns them tagged with their mechanism.
  *
  * @param findings  all raw findings from every checker
  * @param ignoreRules  parsed .scannerignore rules (may be empty)
@@ -156,22 +156,22 @@ export function applySuppressions(
   fileLines: Map<string, string[]>,
 ): SuppressionResult {
   const kept: Finding[] = [];
-  let suppressedCount = 0;
+  const suppressedFindings: SuppressedFinding[] = [];
 
   for (const finding of findings) {
     if (isFileSuppressed(finding, ignoreRules)) {
-      suppressedCount++;
+      suppressedFindings.push({ ...finding, suppressionKind: "external" });
       continue;
     }
 
     const lines = fileLines.get(finding.file);
     if (lines && isInlineSuppressed(finding, lines)) {
-      suppressedCount++;
+      suppressedFindings.push({ ...finding, suppressionKind: "inSource" });
       continue;
     }
 
     kept.push(finding);
   }
 
-  return { kept, suppressedCount };
+  return { kept, suppressedFindings };
 }

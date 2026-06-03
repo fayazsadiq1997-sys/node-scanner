@@ -15,6 +15,9 @@ export const SEVERITY_ORDER: Severity[] = [
 
 export type Category = "secret" | "dependency" | "misconfig";
 
+/** How a finding was suppressed — maps to SARIF suppressions[].kind. */
+export type SuppressionKind = "inSource" | "external";
+
 export interface Finding {
   /** Stable identifier for the rule that produced this finding, e.g. "secret.aws-access-key". */
   ruleId: string;
@@ -32,13 +35,20 @@ export interface Finding {
   remediation: string;
 }
 
+/** A finding that was suppressed, annotated with which mechanism suppressed it. */
+export interface SuppressedFinding extends Finding {
+  suppressionKind: SuppressionKind;
+}
+
 export interface ScanResult {
   root: string;
   startedAt: string;
   finishedAt: string;
   filesScanned: number;
   findings: Finding[];
-  /** Number of findings suppressed via .scannerignore or inline scanner-ignore comments. */
+  /** Findings suppressed via .scannerignore (external) or inline comments (inSource). */
+  suppressedFindings: SuppressedFinding[];
+  /** Convenience count — equals suppressedFindings.length. */
   suppressedCount: number;
 }
 

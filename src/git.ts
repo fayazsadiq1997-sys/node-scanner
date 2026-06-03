@@ -10,10 +10,11 @@ async function git(root: string, args: string[]): Promise<string> {
     });
     return stdout;
   } catch (err) {
-    const msg = err instanceof Error ? err.message : String(err);
-    if (/ENOENT/.test(msg)) {
+    const error = err as NodeJS.ErrnoException;
+    if (error.code === "ENOENT") {
       throw new Error("git is not installed or not on PATH; --diff requires git.");
     }
+    const msg = error.message ?? String(err);
     if (/not a git repository/i.test(msg)) {
       throw new Error(`'${root}' is not inside a git repository; --diff requires git.`);
     }

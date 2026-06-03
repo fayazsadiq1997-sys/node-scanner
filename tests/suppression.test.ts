@@ -27,62 +27,62 @@ function makeFinding(overrides: Partial<Finding> = {}): Finding {
 
 test("keeps findings when no ignore rules exist", () => {
   const finding = makeFinding();
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding],
     [],
     new Map(),
   );
   assert.equal(kept.length, 1);
-  assert.equal(suppressedCount, 0);
+  assert.equal(suppressedFindings.length, 0);
 });
 
 test("suppresses all findings in a file (no ruleId in rule)", () => {
   const finding = makeFinding({ file: "src/legacy/old.ts", line: 10 });
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding],
     [{ filePath: "src/legacy/old.ts", ruleId: null }],
     new Map(),
   );
   assert.equal(kept.length, 0);
-  assert.equal(suppressedCount, 1);
+  assert.equal(suppressedFindings.length, 1);
 });
 
 test("suppresses specific ruleId in a file", () => {
   const awsFinding = makeFinding({ ruleId: "secret.aws-access-key" });
   const jwtFinding = makeFinding({ ruleId: "secret.jwt-secret" });
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [awsFinding, jwtFinding],
     [{ filePath: "src/config.ts", ruleId: "secret.aws-access-key" }],
     new Map(),
   );
   assert.equal(kept.length, 1);
   assert.equal(kept[0].ruleId, "secret.jwt-secret");
-  assert.equal(suppressedCount, 1);
+  assert.equal(suppressedFindings.length, 1);
 });
 
 test("wildcard file path suppresses rule across all files", () => {
   const finding1 = makeFinding({ file: "src/a.ts", ruleId: "misconfig.eval" });
   const finding2 = makeFinding({ file: "src/b.ts", ruleId: "misconfig.eval" });
   const kept1 = makeFinding({ file: "src/a.ts", ruleId: "secret.jwt-secret" });
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding1, finding2, kept1],
     [{ filePath: null, ruleId: "misconfig.eval" }],
     new Map(),
   );
   assert.equal(kept.length, 1);
   assert.equal(kept[0].ruleId, "secret.jwt-secret");
-  assert.equal(suppressedCount, 2);
+  assert.equal(suppressedFindings.length, 2);
 });
 
 test("directory prefix match suppresses all files under that path", () => {
   const finding = makeFinding({ file: "src/legacy/deep/file.ts" });
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding],
     [{ filePath: "src/legacy", ruleId: null }],
     new Map(),
   );
   assert.equal(kept.length, 0);
-  assert.equal(suppressedCount, 1);
+  assert.equal(suppressedFindings.length, 1);
 });
 
 test("does not suppress findings in a different file", () => {
@@ -106,13 +106,13 @@ test("suppresses finding via trailing same-line comment (all rules)", () => {
     "const b = 2;",
     'const key = "AKIAIOSFODNN7EXAMPLE"; // scanner-ignore',
   ];
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding],
     [],
     new Map([["src/config.ts", lines]]),
   );
   assert.equal(kept.length, 0);
-  assert.equal(suppressedCount, 1);
+  assert.equal(suppressedFindings.length, 1);
 });
 
 test("suppresses finding via trailing same-line comment (specific ruleId)", () => {
@@ -124,7 +124,7 @@ test("suppresses finding via trailing same-line comment (specific ruleId)", () =
     'const key = "AKIAIOSFODNN7EXAMPLE"; // scanner-ignore: secret.aws-access-key',
   ];
   const fileLines = new Map([["src/config.ts", lines]]);
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [awsFinding, jwtFinding],
     [],
     fileLines,
@@ -132,7 +132,7 @@ test("suppresses finding via trailing same-line comment (specific ruleId)", () =
   // Only the AWS key finding is suppressed; jwt is kept
   assert.equal(kept.length, 1);
   assert.equal(kept[0].ruleId, "secret.jwt-secret");
-  assert.equal(suppressedCount, 1);
+  assert.equal(suppressedFindings.length, 1);
 });
 
 test("suppresses finding via preceding-line comment (next-line suppression)", () => {
@@ -143,13 +143,13 @@ test("suppresses finding via preceding-line comment (next-line suppression)", ()
     "// scanner-ignore: secret.aws-access-key",
     'const key = "AKIAIOSFODNN7EXAMPLE";',
   ];
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding],
     [],
     new Map([["src/config.ts", lines]]),
   );
   assert.equal(kept.length, 0);
-  assert.equal(suppressedCount, 1);
+  assert.equal(suppressedFindings.length, 1);
 });
 
 test("does not suppress when comment targets a different rule", () => {
@@ -187,14 +187,14 @@ test("multiple ruleIds in one inline comment", () => {
     "const bad = eval(x) || new Function(y);",
   ];
   const fileLines = new Map([["src/config.ts", lines]]);
-  const { kept, suppressedCount } = applySuppressions(
+  const { kept, suppressedFindings } = applySuppressions(
     [finding1, finding2, finding3],
     [],
     fileLines,
   );
   assert.equal(kept.length, 1);
   assert.equal(kept[0].ruleId, "secret.aws-access-key");
-  assert.equal(suppressedCount, 2);
+  assert.equal(suppressedFindings.length, 2);
 });
 
 // ---------------------------------------------------------------------------
@@ -212,7 +212,7 @@ test("counts suppressions from both mechanisms", () => {
     'const jwt = "supersecret";',
   ];
 
-  const { kept: result, suppressedCount } = applySuppressions(
+  const { kept: result, suppressedFindings } = applySuppressions(
     [fileIgnored, inlineIgnored, kept],
     [{ filePath: "src/legacy.ts", ruleId: null }],
     new Map([
@@ -223,5 +223,5 @@ test("counts suppressions from both mechanisms", () => {
 
   assert.equal(result.length, 1);
   assert.equal(result[0].ruleId, "secret.jwt-secret");
-  assert.equal(suppressedCount, 2);
+  assert.equal(suppressedFindings.length, 2);
 });

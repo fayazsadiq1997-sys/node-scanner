@@ -22,42 +22,79 @@ const RULES: PatternRule[] = [
   },
 ];
 
-const DYNAMIC_CODE_RULES = [
+type CallRule = {
+  kind: "call";
+  ruleId: string;
+  title: string;
+  remediation: string;
+  regex: RegExp;
+  matches: (node: TSESTree.CallExpression) => boolean;
+};
+
+type NewRule = {
+  kind: "new";
+  ruleId: string;
+  title: string;
+  remediation: string;
+  regex: RegExp;
+  matches: (node: TSESTree.NewExpression) => boolean;
+};
+
+type DynamicCodeRule = CallRule | NewRule;
+
+const DYNAMIC_CODE_RULES: DynamicCodeRule[] = [
   {
+    kind: "call",
     ruleId: "misconfig.eval",
     title: "Use of eval()",
     remediation: "Avoid eval(); it enables arbitrary code execution. Use JSON.parse or a safe interpreter instead.",
     regex: /\beval\s*\(/,
-    matchesCall: (node: TSESTree.CallExpression) =>
-      node.callee.type === "Identifier" && node.callee.name === "eval",
+    matches: (node) => node.callee.type === "Identifier" && node.callee.name === "eval",
   },
   {
+    kind: "new",
     ruleId: "misconfig.new-function",
     title: "Dynamic code via new Function()",
     remediation: "new Function() executes arbitrary strings as code. Refactor to avoid dynamic evaluation.",
     regex: /\bnew\s+Function\s*\(/,
-    matchesNew: (node: TSESTree.NewExpression) =>
-      node.callee.type === "Identifier" && node.callee.name === "Function",
+    matches: (node) => node.callee.type === "Identifier" && node.callee.name === "Function",
   },
-] as const;
+];
+
+function makeMisconfigFinding(
+  rule: { ruleId: string; title: string; remediation: string },
+  relPath: string,
+  lineNum: number,
+  lines: string[],
+  severity: Finding["severity"] = "high",
+): Finding {
+  return {
+    ruleId: rule.ruleId,
+    category: "misconfig",
+    severity,
+    title: rule.title,
+    file: relPath,
+    line: lineNum,
+    excerpt: (lines[lineNum - 1] ?? "").trim().slice(0, EXCERPT_MAX_LEN),
+    remediation: rule.remediation,
+  };
+}
 
 /** Flags eval() calls and new Function() expressions, which execute arbitrary strings as code. */
 function astCheckDynamicCode(ast: TSESTree.Program, relPath: string, lines: string[]): Finding[] {
   const findings: Finding[] = [];
 
   for (const rule of DYNAMIC_CODE_RULES) {
-    if ("matchesCall" in rule) {
+    if (rule.kind === "call") {
       for (const node of findAll<TSESTree.CallExpression>(ast, "CallExpression")) {
-        if (rule.matchesCall(node)) {
-          const lineNum = node.loc.start.line;
-          findings.push({ ruleId: rule.ruleId, category: "misconfig", severity: "high", title: rule.title, file: relPath, line: lineNum, excerpt: lines[lineNum - 1].trim().slice(0, 120), remediation: rule.remediation });
+        if (rule.matches(node)) {
+          findings.push(makeMisconfigFinding(rule, relPath, node.loc.start.line, lines));
         }
       }
     } else {
       for (const node of findAll<TSESTree.NewExpression>(ast, "NewExpression")) {
-        if (rule.matchesNew(node)) {
-          const lineNum = node.loc.start.line;
-          findings.push({ ruleId: rule.ruleId, category: "misconfig", severity: "high", title: rule.title, file: relPath, line: lineNum, excerpt: lines[lineNum - 1].trim().slice(0, 120), remediation: rule.remediation });
+        if (rule.matches(node)) {
+          findings.push(makeMisconfigFinding(rule, relPath, node.loc.start.line, lines));
         }
       }
     }
@@ -66,9 +103,15 @@ function astCheckDynamicCode(ast: TSESTree.Program, relPath: string, lines: stri
   return findings;
 }
 
+const EXCERPT_MAX_LEN = 120;
+
 const EXEC_NAMES = new Set(["exec", "execSync"]);
 const EXEC_REMEDIATION =
   "Use execFile/spawn with an argument array instead of passing a dynamic string to exec.";
+const CORS_REMEDIATION =
+  "Restrict CORS to an explicit allowlist of trusted origins instead of '*'.";
+const WEAK_RANDOM_REMEDIATION =
+  "Use crypto.randomBytes()/crypto.randomUUID() for tokens and secrets; Math.random() is not cryptographically secure.";
 
 /** Collects exec/execSync bindings imported from child_process. */
 function collectExecBindings(ast: TSESTree.Program): { direct: Set<string>; namespaces: Set<string> } {
@@ -144,17 +187,10 @@ function astCheckExec(ast: TSESTree.Program, relPath: string, lines: string[]): 
     const firstArg = node.arguments[0];
     if (!firstArg || !isDynamic(firstArg as TSESTree.Node)) continue;
 
-    const lineNum = node.loc.start.line;
-    findings.push({
-      ruleId: "misconfig.child-process-exec",
-      category: "misconfig",
-      severity: "high",
-      title: "child_process.exec with dynamic argument",
-      file: relPath,
-      line: lineNum,
-      excerpt: lines[lineNum - 1].trim().slice(0, 120),
-      remediation: EXEC_REMEDIATION,
-    });
+    findings.push(makeMisconfigFinding(
+      { ruleId: "misconfig.child-process-exec", title: "child_process.exec with dynamic argument", remediation: EXEC_REMEDIATION },
+      relPath, node.loc.start.line, lines,
+    ));
   }
 
   return findings;
@@ -172,6 +208,8 @@ const TLS_REMEDIATION =
 function astCheckTLS(ast: TSESTree.Program, relPath: string, lines: string[]): Finding[] {
   const findings: Finding[] = [];
 
+  const tlsRule = { ruleId: "misconfig.tls-reject-disabled", title: "TLS certificate validation disabled", remediation: TLS_REMEDIATION };
+
   for (const node of findAll<TSESTree.Property>(ast, "Property")) {
     if (
       node.key.type === "Identifier" &&
@@ -179,17 +217,7 @@ function astCheckTLS(ast: TSESTree.Program, relPath: string, lines: string[]): F
       node.value.type === "Literal" &&
       node.value.value === false
     ) {
-      const lineNum = node.loc.start.line;
-      findings.push({
-        ruleId: "misconfig.tls-reject-disabled",
-        category: "misconfig",
-        severity: "critical",
-        title: "TLS certificate validation disabled",
-        file: relPath,
-        line: lineNum,
-        excerpt: lines[lineNum - 1].trim().slice(0, 120),
-        remediation: TLS_REMEDIATION,
-      });
+      findings.push(makeMisconfigFinding(tlsRule, relPath, node.loc.start.line, lines, "critical"));
     }
   }
 
@@ -203,17 +231,7 @@ function astCheckTLS(ast: TSESTree.Program, relPath: string, lines: string[]): F
       right.type === "Literal" && (right.value === "0" || right.value === 0);
 
     if (targetsEnvVar && isZero) {
-      const lineNum = node.loc.start.line;
-      findings.push({
-        ruleId: "misconfig.tls-reject-disabled",
-        category: "misconfig",
-        severity: "critical",
-        title: "TLS certificate validation disabled",
-        file: relPath,
-        line: lineNum,
-        excerpt: lines[lineNum - 1].trim().slice(0, 120),
-        remediation: TLS_REMEDIATION,
-      });
+      findings.push(makeMisconfigFinding(tlsRule, relPath, node.loc.start.line, lines, "critical"));
     }
   }
 
@@ -242,17 +260,10 @@ function astCheckCORS(ast: TSESTree.Program, relPath: string, lines: string[]): 
     );
 
     if (hasWildcardOrigin) {
-      const lineNum = node.loc.start.line;
-      findings.push({
-        ruleId: "misconfig.cors-wildcard",
-        category: "misconfig",
-        severity: "medium",
-        title: "Permissive CORS origin '*'",
-        file: relPath,
-        line: lineNum,
-        excerpt: lines[lineNum - 1].trim().slice(0, 120),
-        remediation: "Restrict CORS to an explicit allowlist of trusted origins instead of '*'.",
-      });
+      findings.push(makeMisconfigFinding(
+        { ruleId: "misconfig.cors-wildcard", title: "Permissive CORS origin '*'", remediation: CORS_REMEDIATION },
+        relPath, node.loc.start.line, lines, "medium",
+      ));
     }
   }
 
@@ -285,18 +296,9 @@ const SENSITIVE_NAME_RE = /token|secret|password|otp|nonce|salt/i;
 function astCheckWeakRandom(ast: TSESTree.Program, relPath: string, lines: string[]): Finding[] {
   const findings: Finding[] = [];
 
+  const weakRandomRule = { ruleId: "misconfig.weak-random", title: "Math.random() used for security-sensitive value", remediation: WEAK_RANDOM_REMEDIATION };
   const push = (lineNum: number) =>
-    findings.push({
-      ruleId: "misconfig.weak-random",
-      category: "misconfig",
-      severity: "medium",
-      title: "Math.random() used for security-sensitive value",
-      file: relPath,
-      line: lineNum,
-      excerpt: lines[lineNum - 1].trim().slice(0, 120),
-      remediation:
-        "Use crypto.randomBytes()/crypto.randomUUID() for tokens and secrets; Math.random() is not cryptographically secure.",
-    });
+    findings.push(makeMisconfigFinding(weakRandomRule, relPath, lineNum, lines, "medium"));
 
   for (const node of findAll<TSESTree.VariableDeclarator>(ast, "VariableDeclarator")) {
     if (!node.init || !isMathRandom(node.init)) continue;
@@ -347,20 +349,32 @@ export function scanMisconfigs(relPath: string, content: string): Finding[] {
       if (trimmed.startsWith("//") || trimmed.startsWith("*")) continue;
       for (const rule of DYNAMIC_CODE_RULES) {
         if (rule.regex.test(lines[i])) {
-          findings.push({ ruleId: rule.ruleId, category: "misconfig", severity: "high", title: rule.title, file: relPath, line: i + 1, excerpt: trimmed.slice(0, 120), remediation: rule.remediation });
+          findings.push(makeMisconfigFinding(rule, relPath, i + 1, lines));
         }
       }
       if (/\bexec(?:Sync)?\s*\(\s*[`'"].*\$\{/.test(lines[i])) {
-        findings.push({ ruleId: "misconfig.child-process-exec", category: "misconfig", severity: "high", title: "child_process.exec with dynamic argument", file: relPath, line: i + 1, excerpt: trimmed.slice(0, 120), remediation: EXEC_REMEDIATION });
+        findings.push(makeMisconfigFinding(
+          { ruleId: "misconfig.child-process-exec", title: "child_process.exec with dynamic argument", remediation: EXEC_REMEDIATION },
+          relPath, i + 1, lines,
+        ));
       }
       if (/NODE_TLS_REJECT_UNAUTHORIZED\s*[:=]\s*['"]?0|rejectUnauthorized\s*:\s*false/.test(lines[i])) {
-        findings.push({ ruleId: "misconfig.tls-reject-disabled", category: "misconfig", severity: "critical", title: "TLS certificate validation disabled", file: relPath, line: i + 1, excerpt: trimmed.slice(0, 120), remediation: TLS_REMEDIATION });
+        findings.push(makeMisconfigFinding(
+          { ruleId: "misconfig.tls-reject-disabled", title: "TLS certificate validation disabled", remediation: TLS_REMEDIATION },
+          relPath, i + 1, lines, "critical",
+        ));
       }
       if (/cors\s*\(\s*\{[^}]*origin\s*:\s*['"]\*['"]/.test(lines[i])) {
-        findings.push({ ruleId: "misconfig.cors-wildcard", category: "misconfig", severity: "medium", title: "Permissive CORS origin '*'", file: relPath, line: i + 1, excerpt: trimmed.slice(0, 120), remediation: "Restrict CORS to an explicit allowlist of trusted origins instead of '*'." });
+        findings.push(makeMisconfigFinding(
+          { ruleId: "misconfig.cors-wildcard", title: "Permissive CORS origin '*'", remediation: CORS_REMEDIATION },
+          relPath, i + 1, lines, "medium",
+        ));
       }
       if (/\b(?:token|secret|password|otp|nonce|salt)\b[^\n;]*Math\.random\s*\(/i.test(lines[i])) {
-        findings.push({ ruleId: "misconfig.weak-random", category: "misconfig", severity: "medium", title: "Math.random() used for security-sensitive value", file: relPath, line: i + 1, excerpt: trimmed.slice(0, 120), remediation: "Use crypto.randomBytes()/crypto.randomUUID() for tokens and secrets; Math.random() is not cryptographically secure." });
+        findings.push(makeMisconfigFinding(
+          { ruleId: "misconfig.weak-random", title: "Math.random() used for security-sensitive value", remediation: WEAK_RANDOM_REMEDIATION },
+          relPath, i + 1, lines, "medium",
+        ));
       }
     }
   }
@@ -373,16 +387,7 @@ export function scanMisconfigs(relPath: string, content: string): Finding[] {
 
     for (const rule of RULES) {
       if (rule.regex.test(line)) {
-        findings.push({
-          ruleId: rule.ruleId,
-          category: "misconfig",
-          severity: rule.severity,
-          title: rule.title,
-          file: relPath,
-          line: i + 1,
-          excerpt: trimmed.slice(0, 120),
-          remediation: rule.remediation,
-        });
+        findings.push(makeMisconfigFinding(rule, relPath, i + 1, lines, rule.severity));
       }
     }
   }

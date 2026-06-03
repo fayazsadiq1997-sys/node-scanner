@@ -1,5 +1,6 @@
 import { writeFile } from "node:fs/promises";
-import type { Finding, ScanResult, Severity } from "../types";
+import { createHash } from "node:crypto";
+import type { Finding, ScanResult, Severity, SuppressionKind } from "../types";
 
 /**
  * Emit the scan result as SARIF 2.1.0 — the format GitHub Code Scanning ingests
@@ -52,10 +53,72 @@ function toUri(file: string): string {
   return file.replace(/\\/g, "/");
 }
 
+/** Normalize an excerpt for stable hashing: trim + collapse internal whitespace. */
+function normalizeExcerpt(excerpt: string | undefined): string {
+  return (excerpt ?? "").trim().replace(/\s+/g, " ");
+}
+
+/** sha256 over ruleId + file + normalized excerpt, truncated to 16 hex chars. */
+function hashFingerprint(f: Finding): string {
+  return createHash("sha256")
+    .update(`${f.ruleId}\0${f.file}\0${normalizeExcerpt(f.excerpt)}`)
+    .digest("hex")
+    .slice(0, 16);
+}
+
+/**
+ * Compute a partialFingerprint per finding.
+ * Collisions (same hash for two distinct findings) get a ":<index>" suffix
+ * so GitHub Code Scanning can track each one independently.
+ */
+function computeFingerprints(findings: Finding[]): string[] {
+  const hashes = findings.map(hashFingerprint);
+
+  // Count occurrences of each hash to detect collisions.
+  const counts = new Map<string, number>();
+  for (const h of hashes) counts.set(h, (counts.get(h) ?? 0) + 1);
+
+  // Assign per-hash occurrence indices only where there is a collision.
+  const indices = new Map<string, number>();
+  return hashes.map((h) => {
+    if (counts.get(h)! === 1) return h;
+    const idx = indices.get(h) ?? 0;
+    indices.set(h, idx + 1);
+    return `${h}:${idx}`;
+  });
+}
+
+/** Builds a single SARIF result object, shared by active and suppressed findings. */
+function buildResult(
+  f: Finding,
+  fingerprint: string,
+  suppression?: { kind: SuppressionKind },
+) {
+  return {
+    ruleId: f.ruleId,
+    level: sarifLevel(f.severity),
+    message: { text: f.excerpt ? `${f.title}: ${f.excerpt}` : f.title },
+    locations: [
+      {
+        physicalLocation: {
+          artifactLocation: { uri: toUri(f.file) },
+          ...(f.line ? { region: { startLine: f.line } } : {}),
+        },
+      },
+    ],
+    partialFingerprints: { "snippetSha256/v1": fingerprint },
+    ...(suppression
+      ? { suppressions: [{ kind: suppression.kind, status: "accepted" }] }
+      : {}),
+  };
+}
+
 function buildSarif(result: ScanResult): unknown {
+  const allFindings = [...result.findings, ...(result.suppressedFindings ?? [])];
+
   // One rule per distinct ruleId, populated from the first finding that uses it.
   const rules = new Map<string, Finding>();
-  for (const f of result.findings) {
+  for (const f of allFindings) {
     if (!rules.has(f.ruleId)) rules.set(f.ruleId, f);
   }
 
@@ -73,21 +136,18 @@ function buildSarif(result: ScanResult): unknown {
     },
   }));
 
-  const results = result.findings.map((f) => ({
-    ruleId: f.ruleId,
-    level: sarifLevel(f.severity),
-    message: { text: f.excerpt ? `${f.title}: ${f.excerpt}` : f.title },
-    locations: [
-      {
-        physicalLocation: {
-          artifactLocation: { uri: toUri(f.file) },
-          // Region is omitted entirely when there's no line, rather than
-          // emitting an invalid startLine.
-          ...(f.line ? { region: { startLine: f.line } } : {}),
-        },
-      },
-    ],
-  }));
+  // Compute fingerprints across all findings (active + suppressed) together so
+  // the collision counter is consistent regardless of suppression state.
+  const fingerprints = computeFingerprints(allFindings);
+  const activeCount = result.findings.length;
+
+  const activeResults = result.findings.map((f, i) =>
+    buildResult(f, fingerprints[i]),
+  );
+
+  const suppressedResults = (result.suppressedFindings ?? []).map((f, i) =>
+    buildResult(f, fingerprints[activeCount + i], { kind: f.suppressionKind }),
+  );
 
   return {
     $schema: SARIF_SCHEMA,
@@ -102,7 +162,7 @@ function buildSarif(result: ScanResult): unknown {
             rules: driverRules,
           },
         },
-        results,
+        results: [...activeResults, ...suppressedResults],
       },
     ],
   };
