@@ -42,6 +42,28 @@ These findings were raised by the scanner but are not genuine security issues in
 
 ---
 
+## node-sec-scanner (self-scan)
+
+**Scanned:** 2026-06-03
+**Version:** main branch
+**Command:** `node dist/cli.js scan . --skip-deps --format json`
+
+### Real Findings
+
+#### Unpinned GitHub Actions in .github/workflows/scan.yml
+
+- **Severity:** Medium
+- **Rule:** `misconfig.gha-unpinned-action`
+- **Findings:**
+  - Line 23: `uses: actions/checkout@v4`
+  - Line 25: `uses: actions/setup-node@v4`
+  - Line 51: `uses: github/codeql-action/upload-sarif@v3`
+- **Detail:** All three action references use mutable version tags. A compromised publisher account could move a tag to point to malicious code, which would then run with the permissions granted to the workflow (`contents: read`, `security-events: write`).
+- **Remediation:** Pin each action to its full commit SHA. Tags should be left as comments for readability.
+- **Status:** Detected by the scanner on the same run that introduced the rule — confirmed dogfood.
+
+---
+
 ## Lessons Learned
 
 1. **Regex scanning generates false positives in test and example code.** The highest-value improvement to this scanner is AST-based analysis, which understands whether `eval` is being called or merely referenced in a string.

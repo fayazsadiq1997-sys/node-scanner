@@ -4,7 +4,7 @@ import type { Finding, ScanResult } from "./types";
 import { scanSecrets } from "./checks/secrets";
 import { scanMisconfigs } from "./checks/misconfigs";
 import { scanDependencies } from "./checks/dependencies";
-import { scanTrackedEnvFiles, scanDockerfile } from "./checks/iac";
+import { scanTrackedEnvFiles, scanDockerfile, scanGitHubActions } from "./checks/iac";
 import { loadIgnoreFile, applySuppressions } from "./suppression";
 import { getChangedFiles } from "./git";
 
@@ -148,7 +148,11 @@ export async function scan(
     const ext = path.extname(file).toLowerCase();
     const base = path.basename(file);
     const dockerfile = base === "Dockerfile" || base.startsWith("Dockerfile.") || ext === ".dockerfile";
-    // Read source/config files, dotenv-style files, and Dockerfiles.
+    const relPathEarly = path.relative(absRoot, file).split(path.sep).join("/");
+    const ghaWorkflow =
+      relPathEarly.startsWith(".github/workflows/") &&
+      (ext === ".yml" || ext === ".yaml");
+    // Read source/config files, dotenv-style files, Dockerfiles, and GHA workflows.
     if (!SCANNABLE_EXT.has(ext) && !base.startsWith(".env") && !dockerfile) continue;
 
     try {
@@ -165,7 +169,7 @@ export async function scan(
       continue;
     }
 
-    const relPath = path.relative(absRoot, file).split(path.sep).join("/");
+    const relPath = relPathEarly;
 
     // In diff mode, skip files that haven't changed.
     if (changedFiles && !changedFiles.has(relPath)) continue;
@@ -178,6 +182,7 @@ export async function scan(
     findings.push(...scanSecrets(relPath, content));
     findings.push(...scanMisconfigs(relPath, content));
     if (dockerfile) findings.push(...scanDockerfile(relPath, content));
+    if (ghaWorkflow) findings.push(...scanGitHubActions(relPath, content));
     filesScanned++;
   }
 

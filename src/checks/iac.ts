@@ -1,6 +1,69 @@
 import type { Finding } from "../types";
 import { getTrackedEnvFiles } from "../git";
 
+// ── GitHub Actions checks ─────────────────────────────────────────────────────
+
+const GHA_SHA_RE = /^[0-9a-f]{40}$/;
+
+/**
+ * Checks for two GitHub Actions workflow security issues:
+ *   1. Unpinned action version tag (e.g. @v4 instead of a full commit SHA)
+ *   2. pull_request_target trigger combined with actions/checkout (pwn-request vector)
+ */
+export function scanGitHubActions(relPath: string, content: string): Finding[] {
+  const findings: Finding[] = [];
+  const lines = content.split(/\r?\n/);
+
+  // ── Unpinned action SHA ───────────────────────────────────────────────────
+  for (let i = 0; i < lines.length; i++) {
+    const m = lines[i].match(/^\s*(?:-\s+)?uses:\s+(\S+)$/);
+    if (!m) continue;
+    const ref = m[1];
+    if (ref.startsWith("docker://")) continue;
+    const atIdx = ref.lastIndexOf("@");
+    if (atIdx < 0) continue;
+    const pin = ref.slice(atIdx + 1);
+    if (!GHA_SHA_RE.test(pin)) {
+      findings.push({
+        ruleId: "misconfig.gha-unpinned-action",
+        category: "misconfig",
+        severity: "medium",
+        title: "Unpinned GitHub Actions version",
+        file: relPath,
+        line: i + 1,
+        excerpt: lines[i].trim(),
+        remediation:
+          "Pin actions to a full commit SHA instead of a mutable tag " +
+          "(e.g. `uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683`). " +
+          "Tags can be moved to point to different (potentially malicious) code.",
+      });
+    }
+  }
+
+  // ── pwn-request: pull_request_target + checkout ───────────────────────────
+  const hasPrTarget = content.includes("pull_request_target");
+  const hasCheckout = /uses:\s+actions\/checkout/.test(content);
+  if (hasPrTarget && hasCheckout) {
+    const prtIdx = lines.findIndex((l) => l.includes("pull_request_target"));
+    findings.push({
+      ruleId: "misconfig.gha-pwn-request",
+      category: "misconfig",
+      severity: "high",
+      title: "pull_request_target with actions/checkout (pwn-request vector)",
+      file: relPath,
+      line: prtIdx >= 0 ? prtIdx + 1 : undefined,
+      excerpt: prtIdx >= 0 ? lines[prtIdx].trim() : undefined,
+      remediation:
+        "Combining `pull_request_target` with `actions/checkout` of the PR head " +
+        "runs untrusted code with elevated repository permissions. " +
+        "Use `pull_request` instead, or if elevated permissions are required, " +
+        "build and test in a separate job that does not check out PR code.",
+    });
+  }
+
+  return findings;
+}
+
 // ── Committed .env detection ─────────────────────────────────────────────────
 
 const ENV_FILE_REMEDIATION =

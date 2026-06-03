@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { mkdtemp, writeFile, rm, mkdir } from "node:fs/promises";
 import os from "node:os";
-import { scanDockerfile } from "../src/checks/iac";
+import { scanDockerfile, scanGitHubActions } from "../src/checks/iac";
 import path from "node:path";
 import { scan } from "../src/scanner";
 
@@ -181,5 +181,90 @@ test("dockerfile: does not flag ENV with non-secret key name", () => {
     "FROM node:20\nUSER 1001\nENV PORT=3000\n",
   );
   const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-env-secret");
+  assert.equal(f.length, 0);
+});
+
+// ── scanGitHubActions ─────────────────────────────────────────────────────────
+
+const GHA_PATH = ".github/workflows/ci.yml";
+
+test("gha: flags action pinned to a tag", () => {
+  const content = "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4\n";
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-unpinned-action");
+  assert.equal(f.length, 1);
+  assert.match(f[0].excerpt ?? "", /actions\/checkout@v4/);
+});
+
+test("gha: flags action pinned to a branch name", () => {
+  const content = "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@main\n";
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-unpinned-action");
+  assert.equal(f.length, 1);
+});
+
+test("gha: does not flag action pinned to a full SHA", () => {
+  const content = "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683\n";
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-unpinned-action");
+  assert.equal(f.length, 0);
+});
+
+test("gha: flags multiple unpinned actions in one workflow", () => {
+  const content = [
+    "on: [push]",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+    "      - uses: actions/setup-node@v4",
+    "      - uses: github/codeql-action/upload-sarif@v3",
+  ].join("\n");
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-unpinned-action");
+  assert.equal(f.length, 3);
+});
+
+test("gha: flags pull_request_target combined with actions/checkout", () => {
+  const content = [
+    "on:",
+    "  pull_request_target:",
+    "    types: [opened]",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+  ].join("\n");
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-pwn-request");
+  assert.equal(f.length, 1);
+  assert.equal(f[0].severity, "high");
+});
+
+test("gha: does not flag pull_request (non-target) with checkout", () => {
+  const content = [
+    "on:",
+    "  pull_request:",
+    "    branches: [main]",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4",
+  ].join("\n");
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-pwn-request");
+  assert.equal(f.length, 0);
+});
+
+test("gha: does not flag pull_request_target without checkout", () => {
+  const content = [
+    "on:",
+    "  pull_request_target:",
+    "    types: [labeled]",
+    "jobs:",
+    "  triage:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - name: Label",
+    "        run: echo labeling",
+  ].join("\n");
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-pwn-request");
   assert.equal(f.length, 0);
 });
