@@ -23,6 +23,33 @@ async function git(root: string, args: string[]): Promise<string> {
 }
 
 /**
+ * Returns forward-slash paths (relative to `root`) of every `.env`-style file
+ * that git tracks — i.e. is committed, not just present on disk.
+ * Returns an empty array if `root` is not a git repo or git is unavailable.
+ */
+export async function getTrackedEnvFiles(root: string): Promise<string[]> {
+  let output: string;
+  try {
+    output = await git(root, ["ls-files"]);
+  } catch (err) {
+    const msg = (err as Error).message ?? String(err);
+    // Unexpected failure (e.g. maxBuffer exceeded, permission error on .git/).
+    if (!/not installed|not on PATH|not inside a git repository/i.test(msg)) {
+      console.error(`[node-sec-scanner] committed-env check skipped: ${msg}`);
+    }
+    return [];
+  }
+  return output
+    .split("\n")
+    .map((l) => l.trim())
+    .filter((l) => {
+      if (!l) return false;
+      const base = l.split("/").pop() ?? "";
+      return base.startsWith(".env");
+    });
+}
+
+/**
  * Returns the set of files that have changed, as forward-slash paths relative
  * to `root`, suitable for matching against the scanner's relPath.
  *

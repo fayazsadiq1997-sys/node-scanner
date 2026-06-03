@@ -4,6 +4,7 @@ import type { Finding, ScanResult } from "./types";
 import { scanSecrets } from "./checks/secrets";
 import { scanMisconfigs } from "./checks/misconfigs";
 import { scanDependencies } from "./checks/dependencies";
+import { scanTrackedEnvFiles, scanDockerfile } from "./checks/iac";
 import { loadIgnoreFile, applySuppressions } from "./suppression";
 import { getChangedFiles } from "./git";
 
@@ -146,8 +147,9 @@ export async function scan(
   for await (const file of walk(absRoot, { skipDirs })) {
     const ext = path.extname(file).toLowerCase();
     const base = path.basename(file);
-    // Read source/config files and any dotenv-style file.
-    if (!SCANNABLE_EXT.has(ext) && !base.startsWith(".env")) continue;
+    const dockerfile = base === "Dockerfile" || base.startsWith("Dockerfile.") || ext === ".dockerfile";
+    // Read source/config files, dotenv-style files, and Dockerfiles.
+    if (!SCANNABLE_EXT.has(ext) && !base.startsWith(".env") && !dockerfile) continue;
 
     try {
       const info = await stat(file);
@@ -175,6 +177,7 @@ export async function scan(
 
     findings.push(...scanSecrets(relPath, content));
     findings.push(...scanMisconfigs(relPath, content));
+    if (dockerfile) findings.push(...scanDockerfile(relPath, content));
     filesScanned++;
   }
 
@@ -191,6 +194,9 @@ export async function scan(
       // Network failure shouldn't abort the whole scan.
     }
   }
+
+  // IaC / cloud misconfig checks — repo-level, run unconditionally.
+  findings.push(...(await scanTrackedEnvFiles(absRoot)));
 
   // Apply .scannerignore and inline scanner-ignore suppressions.
   const { kept, suppressedFindings } = options.noIgnore

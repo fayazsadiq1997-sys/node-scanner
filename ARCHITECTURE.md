@@ -4,10 +4,11 @@ Guidance for navigating this codebase. Describes architecture and conventions, n
 
 ## What this is
 
-`node-sec-scanner` — a CLI that scans Node.js projects for three classes of issue:
+`node-sec-scanner` — a CLI that scans Node.js projects for four classes of issue:
 - **secrets** — hardcoded credentials (regex-based)
 - **dependency** vulnerabilities (OSV.dev lookup)
 - **misconfig** — dangerous code patterns (AST-based, regex fallback)
+- **IaC misconfigurations** — committed `.env` files, Dockerfile security issues
 
 ## Commands
 
@@ -28,7 +29,7 @@ cli.ts  →  scanner.scan()  →  checks/*  →  Finding[]
 
 1. **[src/cli.ts](src/cli.ts)** — commander setup, flag parsing, picks a reporter, applies `--fail-on` exit logic. Exit codes: 1 = threshold breached, 2 = error.
 2. **[src/scanner.ts](src/scanner.ts)** — orchestrator. Walks the tree (`walk` async generator), filters by extension/size/excluded dirs, runs each content check, runs the dependency check once, then applies suppressions. Returns `ScanResult`. Diff mode resolves changed files up front via git.
-3. **[src/checks/](src/checks)** — one file per category, each exporting a `scanX(relPath, content)` (or `scanDependencies(root)`) returning `Finding[]`.
+3. **[src/checks/](src/checks)** — one file per category, each exporting a `scanX(relPath, content)` (or `scanDependencies(root)`) returning `Finding[]`. IaC checks live in [src/checks/iac.ts](src/checks/iac.ts) and have two shapes: `scanDockerfile` is a sync per-file check; `scanTrackedEnvFiles` is an async repo-level check (runs once, like the dependency check).
 4. **[src/suppression.ts](src/suppression.ts)** — filters findings via `.scannerignore` + inline `// scanner-ignore` comments; returns kept + suppressed (tagged).
 5. **[src/reporters/](src/reporters)** — encode a `ScanResult` to an output format. Pure formatting, no scanning logic.
 
@@ -37,6 +38,7 @@ cli.ts  →  scanner.scan()  →  checks/*  →  Finding[]
 - **`Finding` is the universal currency.** Defined in [src/types.ts](src/types.ts). Every check produces them; every reporter consumes them. Change this type carefully — it ripples everywhere.
 - **Adding a secret/http rule** = append to the `RULES` array in the relevant check file. Regex-driven, declarative.
 - **Adding a misconfig rule** = prefer an AST check in [src/checks/misconfigs.ts](src/checks/misconfigs.ts) (`astCheckX` functions over `findAll`), with a regex fallback for when parsing fails. AST parsing lives in [src/ast.ts](src/ast.ts).
+- **Adding a Dockerfile rule** = add to `scanDockerfile` in [src/checks/iac.ts](src/checks/iac.ts). Line-by-line, no AST. Scanner automatically routes `Dockerfile`, `Dockerfile.*`, and `*.dockerfile` files there.
 - **Severity ordering** is centralized: `SEVERITY_ORDER` + `meetsThreshold()` in types.ts. Don't hardcode comparisons.
 - **Paths in findings** are relative to scan root, forward-slashed (even on Windows).
 - **`ruleId` namespacing**: `secret.*`, `dependency.*`, `misconfig.*`. Used by suppression and SARIF rule catalog.
@@ -50,6 +52,7 @@ cli.ts  →  scanner.scan()  →  checks/*  →  Finding[]
 - Dependency check hits the network (OSV.dev); failures are swallowed so they don't abort a scan. Use `--skip-deps` for offline/deterministic runs.
 - Test/example/fixture dirs are **excluded by default** (`NON_PRODUCTION_DIRS` in scanner.ts) to cut false positives. `--include-test-dirs` opts back in.
 - In `--diff` mode the dependency check only re-runs when a manifest/lockfile changed (`MANIFEST_FILES`).
+- `scanTrackedEnvFiles` calls `git ls-files`; unexpected failures (e.g. permission errors) print a warning to stderr and return no findings rather than aborting the scan. Not-a-repo and git-not-installed are silently ignored.
 - `terminal` format can't be written to `--output` (colors); cli.ts throws.
 - Project is `commonjs` (`type` in package.json); compiled output targets `dist/`.
 
