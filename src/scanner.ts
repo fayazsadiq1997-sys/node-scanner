@@ -133,6 +133,22 @@ export async function scan(
 ): Promise<ScanResult> {
   const startedAt = new Date().toISOString();
   const absRoot = path.resolve(root);
+
+  // Reject non-directory roots up front. Passing a file path would otherwise
+  // walk nothing and report a clean scan (filesScanned: 0, exit 0) — a false
+  // all-clear in CI — plus a spurious git warning from the committed-env check.
+  let rootInfo;
+  try {
+    rootInfo = await stat(absRoot);
+  } catch {
+    throw new Error(`scan path does not exist: ${absRoot}`);
+  }
+  if (!rootInfo.isDirectory()) {
+    throw new Error(
+      `scan path is not a directory: ${absRoot} (pass the project directory, not a file)`,
+    );
+  }
+
   const findings: Finding[] = [];
   let filesScanned = 0;
 

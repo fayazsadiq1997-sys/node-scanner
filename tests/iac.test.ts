@@ -77,6 +77,27 @@ test("gitignored .env file is not flagged", async () => {
   }
 });
 
+test("committed .env.example, .env.sample, and .envrc are not flagged", async () => {
+  const dir = await makeRepo();
+  try {
+    await writeFile(path.join(dir, ".env.example"), "API_KEY=your-key-here\n");
+    await writeFile(path.join(dir, ".env.sample"), "API_KEY=changeme\n");
+    await writeFile(path.join(dir, ".envrc"), "export PATH=$PWD/bin:$PATH\n");
+    await writeFile(path.join(dir, ".env"), "API_KEY=real\n");
+    git(dir, "add", ".env.example", ".env.sample", ".envrc", ".env");
+    git(dir, "commit", "-m", "add env files");
+
+    const result = await scan(dir, { skipDependencies: true });
+    const files = result.findings
+      .filter((f) => f.ruleId === "misconfig.committed-env-file")
+      .map((f) => f.file);
+
+    assert.deepEqual(files, [".env"], "only the real .env should be flagged");
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("non-git directory produces no committed-env-file finding", async () => {
   const dir = await mkdtemp(path.join(os.tmpdir(), "scanner-iac-nogit-"));
   try {
@@ -143,6 +164,42 @@ test("dockerfile: flags explicit USER root", () => {
 test("dockerfile: does not flag when non-root USER is set", () => {
   const findings = scanDockerfile("Dockerfile", "FROM node:20\nUSER 1001\n");
   const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-root-user");
+  assert.equal(f.length, 0);
+});
+
+test("dockerfile: flags zero-padded root UID (USER 00) and USER 0:0", () => {
+  for (const user of ["USER 00", "USER 0000", "USER 0:0", "USER root:root"]) {
+    const findings = scanDockerfile("Dockerfile", `FROM node:20\n${user}\n`);
+    const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-root-user");
+    assert.equal(f.length, 1, `${user} should still count as root`);
+  }
+});
+
+test("dockerfile: USER only in an early build stage does not mask a root final stage", () => {
+  const content = [
+    "FROM node:20 AS build",
+    "USER appuser",
+    "RUN npm ci",
+    "FROM node:20-slim",
+    "COPY --from=build /app /app",
+  ].join("\n");
+  const f = scanDockerfile("Dockerfile", content).filter(
+    (x) => x.ruleId === "misconfig.dockerfile-root-user",
+  );
+  assert.equal(f.length, 1, "final stage runs as root and must be flagged");
+});
+
+test("dockerfile: non-root USER in the final stage of a multi-stage build passes", () => {
+  const content = [
+    "FROM node:20 AS build",
+    "RUN npm ci",
+    "FROM node:20-slim",
+    "COPY --from=build /app /app",
+    "USER 1001",
+  ].join("\n");
+  const f = scanDockerfile("Dockerfile", content).filter(
+    (x) => x.ruleId === "misconfig.dockerfile-root-user",
+  );
   assert.equal(f.length, 0);
 });
 
@@ -264,6 +321,42 @@ test("gha: does not flag pull_request_target without checkout", () => {
     "    steps:",
     "      - name: Label",
     "        run: echo labeling",
+  ].join("\n");
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-pwn-request");
+  assert.equal(f.length, 0);
+});
+
+test("gha: flags unpinned action with a trailing inline comment", () => {
+  const content = "on: [push]\njobs:\n  build:\n    runs-on: ubuntu-latest\n    steps:\n      - uses: actions/checkout@v4 # pinned later\n";
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-unpinned-action");
+  assert.equal(f.length, 1);
+});
+
+test("gha: does not flag SHA-pinned action with a trailing comment or quotes", () => {
+  const content = [
+    "on: [push]",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2",
+    '      - uses: "actions/setup-node@11bd71901bbe5b1630ceea73d27597364c9af683"',
+  ].join("\n");
+  const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-unpinned-action");
+  assert.equal(f.length, 0);
+});
+
+test("gha: pull_request_target mentioned only in comments is not a pwn-request", () => {
+  const content = [
+    "# Do not use pull_request_target here — see security note.",
+    "on:",
+    "  pull_request:",
+    "    branches: [main]",
+    "jobs:",
+    "  build:",
+    "    runs-on: ubuntu-latest",
+    "    steps:",
+    "      - uses: actions/checkout@v4  # not pull_request_target",
   ].join("\n");
   const f = scanGitHubActions(GHA_PATH, content).filter((x) => x.ruleId === "misconfig.gha-pwn-request");
   assert.equal(f.length, 0);

@@ -6,4 +6,5 @@ dist/
 !.env.example
 .DS_Store
 coverage/
-PLAN.md
+plan.md
+ISSUES.md

@@ -5,7 +5,7 @@ codebase for four classes of problem that appear constantly in real AppSec
 review:
 
 1. **Hardcoded secrets** — AWS keys, private keys, API keys, JWT secrets, bearer tokens, hardcoded passwords.
-2. **Vulnerable dependencies** — known CVEs in `package.json` dependencies, resolved against the [OSV.dev](https://osv.dev) database.
+2. **Vulnerable dependencies** — known CVEs resolved against the [OSV.dev](https://osv.dev) database. With a `package-lock.json`, every installed package is checked — direct *and* transitive — at its exact version; without one, the dependencies declared in `package.json` are checked.
 3. **Dangerous misconfigurations** — `eval()`, command injection via `child_process.exec`, weak randomness for security tokens, disabled TLS verification (`rejectUnauthorized: false`), wildcard CORS, plaintext `http://` endpoints.
 4. **IaC misconfigurations** — committed `.env` files (git-tracked rather than gitignored), Dockerfile issues (unpinned base image tags, containers running as root, secrets in `ENV` instructions), GitHub Actions workflow issues (unpinned action SHAs, `pull_request_target` + checkout pwn-request vector).
 
@@ -62,7 +62,7 @@ The `terminal` format cannot be written to a file; pair `--output` with
 |------|---------|-------------|
 | `-f, --format <fmt>` | `terminal` | Output encoder: `terminal` \| `json` \| `sarif` |
 | `-o, --output <file>` | stdout | Write report to a file |
-| `--fail-on <severity>` | off | Exit 1 if any finding is at or above `critical` \| `high` \| `medium` \| `low` |
+| `--fail-on <severity>` | off | Exit 1 if any finding is at or above `critical` \| `high` \| `medium` \| `low` \| `info` (an unknown value exits 2) |
 | `--skip-deps` | off | Skip the dependency check (no network call) |
 | `--include-test-dirs` | off | Scan `test/`, `examples/`, `fixtures/` etc. (excluded by default) |
 | `--exclude <dirs>` | — | Comma-separated additional directory names to skip |
@@ -175,7 +175,7 @@ want findings to be report-only rather than breaking the build.
 | Check | Technique | Source |
 |-------|-----------|--------|
 | Secrets | Rule-driven regex with redacted output | `src/checks/secrets.ts` |
-| Dependencies | OSV.dev REST API, exact versions from `package-lock.json` | `src/checks/dependencies.ts` |
+| Dependencies | OSV.dev REST API; all installed packages (incl. transitive) from `package-lock.json` | `src/checks/dependencies.ts` |
 | Misconfigurations | AST via `@typescript-eslint/parser`; `insecure-http` remains regex | `src/checks/misconfigs.ts` |
 | Committed `.env` files | `git ls-files` — flags tracked `.env*` files, not just present on disk | `src/checks/iac.ts` |
 | Dockerfile issues | Line-by-line: unpinned tags, root user, secrets in `ENV` | `src/checks/iac.ts` |

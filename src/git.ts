@@ -27,8 +27,16 @@ async function git(root: string, args: string[]): Promise<string> {
 }
 
 /**
+ * Example/template env files are committed deliberately (with placeholder
+ * values) as documentation — flagging them is pure noise.
+ */
+const ENV_EXAMPLE_RE = /\.(example|sample|template|dist)$/i;
+
+/**
  * Returns forward-slash paths (relative to `root`) of every `.env`-style file
- * that git tracks — i.e. is committed, not just present on disk.
+ * that git tracks — i.e. is committed, not just present on disk. Excludes
+ * example/template variants (.env.example etc.) and .envrc, which is a direnv
+ * script rather than a dotenv credentials file.
  * Returns an empty array if `root` is not a git repo or git is unavailable.
  */
 export async function getTrackedEnvFiles(root: string): Promise<string[]> {
@@ -49,7 +57,9 @@ export async function getTrackedEnvFiles(root: string): Promise<string[]> {
     .filter((l) => {
       if (!l) return false;
       const base = l.split("/").pop() ?? "";
-      return base.startsWith(".env");
+      if (!base.startsWith(".env")) return false;
+      if (base === ".envrc") return false;
+      return !ENV_EXAMPLE_RE.test(base);
     });
 }
 

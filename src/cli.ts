@@ -5,7 +5,7 @@ import { scan } from "./scanner";
 import { reportTerminal } from "./reporters/terminal";
 import { reportJson } from "./reporters/json";
 import { reportSarif } from "./reporters/sarif";
-import { meetsThreshold, type Severity } from "./types";
+import { meetsThreshold, SEVERITY_ORDER, type Severity } from "./types";
 
 const program = new Command();
 
@@ -23,7 +23,7 @@ program
   .option("-o, --output <file>", "write the report to a file instead of stdout")
   .option(
     "--fail-on <severity>",
-    "exit with code 1 if any finding is at or above this severity (critical|high|medium|low)",
+    "exit with code 1 if any finding is at or above this severity (critical|high|medium|low|info)",
   )
   .option("--skip-deps", "skip the dependency vulnerability check (no network)", false)
   .option("--include-test-dirs", "scan test/, examples/, fixtures/ etc. (excluded by default)", false)
@@ -34,6 +34,15 @@ program
     "scan only files changed vs <ref> (e.g. main); with no ref, scan uncommitted working-tree changes",
   )
   .action(async (targetPath: string, opts) => {
+    // Validate --fail-on before scanning: an unknown severity would otherwise
+    // index to -1 in SEVERITY_ORDER and compare as below every real severity,
+    // silently failing the build on any finding at all.
+    if (opts.failOn && !SEVERITY_ORDER.includes(opts.failOn as Severity)) {
+      throw new Error(
+        `unknown --fail-on severity '${opts.failOn}'; expected one of: ${SEVERITY_ORDER.join(" | ")}`,
+      );
+    }
+
     // --diff is absent (undefined), present without a value (true), or present
     // with a ref (string). Map that to the scanner's diff option.
     const diff =

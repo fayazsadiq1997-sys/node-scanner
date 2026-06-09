@@ -9,16 +9,27 @@ const GHA_SHA_RE = /^[0-9a-f]{40}$/;
  * Checks for two GitHub Actions workflow security issues:
  *   1. Unpinned action version tag (e.g. @v4 instead of a full commit SHA)
  *   2. pull_request_target trigger combined with actions/checkout (pwn-request vector)
+ *
+ * All matching runs against comment-stripped lines: a YAML comment mentioning
+ * `pull_request_target` must not trigger a finding, and a `uses:` ref followed
+ * by an inline comment (`uses: actions/checkout@v4 # note`) must still be parsed.
+ * Excerpts use the original line so reports show real file content.
  */
 export function scanGitHubActions(relPath: string, content: string): Finding[] {
   const findings: Finding[] = [];
   const lines = content.split(/\r?\n/);
+  const codeLines = lines.map((l) => {
+    const hash = l.indexOf("#");
+    return hash >= 0 ? l.slice(0, hash) : l;
+  });
 
   // ── Unpinned action SHA ───────────────────────────────────────────────────
-  for (let i = 0; i < lines.length; i++) {
-    const m = lines[i].match(/^\s*(?:-\s+)?uses:\s+(\S+)$/);
+  for (let i = 0; i < codeLines.length; i++) {
+    const m = codeLines[i].match(/^\s*(?:-\s+)?uses:\s+(\S+)\s*$/);
     if (!m) continue;
-    const ref = m[1];
+    // YAML allows the ref to be quoted; strip quotes so the SHA test runs
+    // against the ref itself rather than `...@v4"`.
+    const ref = m[1].replace(/^['"]|['"]$/g, "");
     if (ref.startsWith("docker://")) continue;
     const atIdx = ref.lastIndexOf("@");
     if (atIdx < 0) continue;
@@ -41,10 +52,10 @@ export function scanGitHubActions(relPath: string, content: string): Finding[] {
   }
 
   // ── pwn-request: pull_request_target + checkout ───────────────────────────
-  const hasPrTarget = content.includes("pull_request_target");
-  const hasCheckout = /uses:\s+actions\/checkout/.test(content);
+  const hasPrTarget = codeLines.some((l) => l.includes("pull_request_target"));
+  const hasCheckout = codeLines.some((l) => /uses:\s+['"]?actions\/checkout/.test(l));
   if (hasPrTarget && hasCheckout) {
-    const prtIdx = lines.findIndex((l) => l.includes("pull_request_target"));
+    const prtIdx = codeLines.findIndex((l) => l.includes("pull_request_target"));
     findings.push({
       ruleId: "misconfig.gha-pwn-request",
       category: "misconfig",
@@ -107,6 +118,10 @@ function looksLikeSecretValue(value: string): boolean {
  *   1. Unpinned base image tag (FROM image or FROM image:latest)
  *   2. Container runs as root (no non-root USER instruction)
  *   3. Secret value hardcoded in an ENV instruction
+ *
+ * The root-user check is evaluated per build stage: each FROM resets the
+ * tracking, so only the final stage (the one that actually runs in production)
+ * decides the finding. A USER in an earlier build stage does not count.
  */
 export function scanDockerfile(relPath: string, content: string): Finding[] {
   const findings: Finding[] = [];
@@ -121,6 +136,8 @@ export function scanDockerfile(relPath: string, content: string): Finding[] {
     // ── FROM: unpinned base image ────────────────────────────────────────────
     const fromMatch = line.match(/^FROM\s+(\S+)/i);
     if (fromMatch) {
+      // New build stage — only the final stage's USER matters at runtime.
+      hasNonRootUser = false;
       const image = fromMatch[1];
       // scratch is a special no-op base; digest-pinned images are fine
       if (image.toLowerCase() !== "scratch" && !image.includes("@")) {
@@ -147,8 +164,11 @@ export function scanDockerfile(relPath: string, content: string): Finding[] {
     // ── USER: track whether a non-root user is set ───────────────────────────
     const userMatch = line.match(/^USER\s+(\S+)/i);
     if (userMatch) {
-      const who = userMatch[1];
-      if (who !== "root" && who !== "0") hasNonRootUser = true;
+      // Strip an optional :group suffix ("0:0" runs as root too), and compare
+      // UIDs numerically so zero-padded forms ("00", "0000") don't bypass the
+      // check. parseInt of a username is NaN, which never equals 0.
+      const who = userMatch[1].split(":")[0];
+      if (who !== "root" && parseInt(who, 10) !== 0) hasNonRootUser = true;
     }
 
     // ── ENV: secret hardcoded in instruction ─────────────────────────────────

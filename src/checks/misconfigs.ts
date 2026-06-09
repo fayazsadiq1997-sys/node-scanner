@@ -124,6 +124,13 @@ const CORS_REMEDIATION =
 const WEAK_RANDOM_REMEDIATION =
   "Use crypto.randomBytes()/crypto.randomUUID() for tokens and secrets; Math.random() is not cryptographically secure.";
 
+/** Returns true if the call expression is `require("<moduleName>")`. */
+function isRequireOf(call: TSESTree.CallExpression, moduleName: string): boolean {
+  if (call.callee.type !== "Identifier" || call.callee.name !== "require") return false;
+  const arg = call.arguments[0];
+  return !!arg && arg.type === "Literal" && arg.value === moduleName;
+}
+
 /** Collects exec/execSync bindings imported from child_process. */
 function collectExecBindings(ast: TSESTree.Program): { direct: Set<string>; namespaces: Set<string> } {
   const direct = new Set<string>();
@@ -142,19 +149,34 @@ function collectExecBindings(ast: TSESTree.Program): { direct: Set<string>; name
 
   for (const node of findAll<TSESTree.VariableDeclarator>(ast, "VariableDeclarator")) {
     const init = node.init;
-    if (!init || init.type !== "CallExpression") continue;
-    if (init.callee.type !== "Identifier" || init.callee.name !== "require") continue;
-    const arg = init.arguments[0];
-    if (!arg || arg.type !== "Literal" || arg.value !== "child_process") continue;
+    if (!init) continue;
 
-    if (node.id.type === "ObjectPattern") {
-      for (const prop of node.id.properties) {
-        if (prop.type === "Property" && prop.value.type === "Identifier") {
-          direct.add(prop.value.name);
+    // Form: const cp = require("child_process")  OR  const { exec } = require("child_process")
+    if (init.type === "CallExpression" && isRequireOf(init, "child_process")) {
+      if (node.id.type === "ObjectPattern") {
+        for (const prop of node.id.properties) {
+          if (prop.type === "Property" && prop.value.type === "Identifier") {
+            direct.add(prop.value.name);
+          }
         }
+      } else if (node.id.type === "Identifier") {
+        namespaces.add(node.id.name);
       }
-    } else if (node.id.type === "Identifier") {
-      namespaces.add(node.id.name);
+      continue;
+    }
+
+    // Form: const exec = require("child_process").exec
+    // init is a MemberExpression over the require() call, not a CallExpression, so the
+    // branch above skips it. Map the accessed property (exec/execSync) to a direct binding.
+    if (
+      init.type === "MemberExpression" &&
+      init.object.type === "CallExpression" &&
+      isRequireOf(init.object, "child_process") &&
+      init.property.type === "Identifier" &&
+      EXEC_NAMES.has(init.property.name) &&
+      node.id.type === "Identifier"
+    ) {
+      direct.add(node.id.name);
     }
   }
 
