@@ -77,6 +77,7 @@ function fileMatches(findingFile: string, rulePath: string | null): boolean {
   return findingFile.startsWith(prefix);
 }
 
+/** Returns true if any .scannerignore rule matches the finding's file and ruleId. */
 function isFileSuppressed(finding: Finding, rules: IgnoreRule[]): boolean {
   for (const rule of rules) {
     if (!fileMatches(finding.file, rule.filePath)) continue;

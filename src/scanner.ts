@@ -96,6 +96,11 @@ export interface ScanOptions {
   diff?: { base?: string };
 }
 
+/**
+ * Recursively yields absolute file paths under `dir`, skipping any directory
+ * whose basename is in `skipDirs`. Silently skips unreadable directories so a
+ * single permission error does not abort the entire scan.
+ */
 async function* walk(
   dir: string,
   opts: { skipDirs: Set<string> },
@@ -117,6 +122,11 @@ async function* walk(
   }
 }
 
+/**
+ * Main entry point. Walks the project tree, runs all enabled checks, applies
+ * suppressions, and returns a complete ScanResult. Callers should catch top-level
+ * errors; individual check failures (network, parse) are swallowed internally.
+ */
 export async function scan(
   root: string,
   options: ScanOptions = {},

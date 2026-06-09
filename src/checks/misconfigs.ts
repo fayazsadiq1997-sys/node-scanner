@@ -10,7 +10,8 @@ interface PatternRule {
   remediation: string;
 }
 
-// Rules still using regex (not yet ported to AST).
+// Rules that remain regex-only (not yet ported to AST — string literal checks
+// like insecure-http don't benefit from structural analysis).
 const RULES: PatternRule[] = [
   {
     ruleId: "misconfig.insecure-http",
@@ -42,6 +43,11 @@ type NewRule = {
 
 type DynamicCodeRule = CallRule | NewRule;
 
+/**
+ * Rules for dynamic code execution patterns. Each entry includes a regex for the
+ * regex-fallback path (used when AST parsing fails) and an AST `matches` predicate
+ * for the accurate structural check.
+ */
 const DYNAMIC_CODE_RULES: DynamicCodeRule[] = [
   {
     kind: "call",
@@ -61,6 +67,11 @@ const DYNAMIC_CODE_RULES: DynamicCodeRule[] = [
   },
 ];
 
+/**
+ * Builds a misconfig Finding from a rule descriptor and source location.
+ * Defaults to "high" severity so callers only override when the rule needs
+ * something different (e.g. TLS disabled → "critical", CORS wildcard → "medium").
+ */
 function makeMisconfigFinding(
   rule: { ruleId: string; title: string; remediation: string },
   relPath: string,

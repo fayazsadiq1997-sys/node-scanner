@@ -1,7 +1,13 @@
+/**
+ * Terminal reporter — prints a colourised, human-readable summary to stdout.
+ * Not suitable for file output (use json or sarif for that).
+ */
+
 import pc from "picocolors";
 import type { Finding, ScanResult, Severity } from "../types";
 import { SEVERITY_ORDER } from "../types";
 
+/** Maps a severity level to a colourised label string for terminal display. */
 function colorForSeverity(sev: Severity, text: string): string {
   switch (sev) {
     case "critical":
@@ -60,6 +66,7 @@ export function reportTerminal(result: ScanResult): void {
   console.log("");
 }
 
+/** Prints a single finding block: severity badge, title, location, excerpt, remediation. */
 function printFinding(f: Finding): void {
   const loc = f.line ? `${f.file}:${f.line}` : f.file;
   console.log(

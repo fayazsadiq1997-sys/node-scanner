@@ -7,7 +7,7 @@ review:
 1. **Hardcoded secrets** — AWS keys, private keys, API keys, JWT secrets, bearer tokens, hardcoded passwords.
 2. **Vulnerable dependencies** — known CVEs in `package.json` dependencies, resolved against the [OSV.dev](https://osv.dev) database.
 3. **Dangerous misconfigurations** — `eval()`, command injection via `child_process.exec`, weak randomness for security tokens, disabled TLS verification (`rejectUnauthorized: false`), wildcard CORS, plaintext `http://` endpoints.
-4. **IaC misconfigurations** — committed `.env` files (git-tracked rather than gitignored), Dockerfile issues (unpinned base image tags, containers running as root, secrets in `ENV` instructions).
+4. **IaC misconfigurations** — committed `.env` files (git-tracked rather than gitignored), Dockerfile issues (unpinned base image tags, containers running as root, secrets in `ENV` instructions), GitHub Actions workflow issues (unpinned action SHAs, `pull_request_target` + checkout pwn-request vector).
 
 Built with TypeScript and a deliberately small dependency footprint (2 runtime deps).
 
@@ -179,6 +179,7 @@ want findings to be report-only rather than breaking the build.
 | Misconfigurations | AST via `@typescript-eslint/parser`; `insecure-http` remains regex | `src/checks/misconfigs.ts` |
 | Committed `.env` files | `git ls-files` — flags tracked `.env*` files, not just present on disk | `src/checks/iac.ts` |
 | Dockerfile issues | Line-by-line: unpinned tags, root user, secrets in `ENV` | `src/checks/iac.ts` |
+| GitHub Actions issues | Line-by-line: unpinned action SHAs (`@tag` vs 40-char commit SHA), `pull_request_target` + checkout | `src/checks/iac.ts` |
 
 The misconfig AST checks are import-aware: `exec` is only flagged when the
 binding comes from `child_process`, and weak-random is only flagged when the

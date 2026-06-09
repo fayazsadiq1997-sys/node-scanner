@@ -62,6 +62,8 @@ These findings were raised by the scanner but are not genuine security issues in
 - **Remediation:** Pin each action to its full commit SHA. Tags should be left as comments for readability.
 - **Status:** Detected by the scanner on the same run that introduced the rule — confirmed dogfood.
 
+![GitHub Code Scanning alerts showing 3 unpinned GitHub Actions version findings in scan.yml](docs/screenshots/gha-code-scanning-findings.png)
+
 ---
 
 ## Lessons Learned

@@ -113,6 +113,7 @@ function buildResult(
   };
 }
 
+/** Assembles the full SARIF 2.1.0 document from a ScanResult. */
 function buildSarif(result: ScanResult): unknown {
   const allFindings = [...result.findings, ...(result.suppressedFindings ?? [])];
 
@@ -168,6 +169,7 @@ function buildSarif(result: ScanResult): unknown {
   };
 }
 
+/** Serialises the SARIF document and writes it to stdout or a file. */
 export async function reportSarif(
   result: ScanResult,
   outputPath?: string,

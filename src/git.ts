@@ -3,6 +3,10 @@ import { promisify } from "node:util";
 
 const execFileAsync = promisify(execFile);
 
+/**
+ * Runs a git command in `root` and returns stdout. Throws a descriptive Error
+ * for the two most common failure modes: git not installed and not-a-repo.
+ */
 async function git(root: string, args: string[]): Promise<string> {
   try {
     const { stdout } = await execFileAsync("git", ["-C", root, ...args], {

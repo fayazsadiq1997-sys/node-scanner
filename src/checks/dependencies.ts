@@ -61,6 +61,11 @@ function mapSeverity(vuln: OsvVuln): Severity {
   return "medium";
 }
 
+/**
+ * Reads package.json and resolves all declared dependencies to concrete versions.
+ * Uses package-lock.json when available (exact installed version), falling back
+ * to cleaning the declared semver range from package.json.
+ */
 async function resolveDependencies(root: string): Promise<ResolvedDep[]> {
   const pkgPath = path.join(root, "package.json");
   let pkgRaw: string;
@@ -85,6 +90,10 @@ async function resolveDependencies(root: string): Promise<ResolvedDep[]> {
   }));
 }
 
+/**
+ * Parses package-lock.json and returns a map of package name → exact installed version.
+ * Returns an empty map if the lockfile is absent or cannot be parsed.
+ */
 async function readLockVersions(root: string): Promise<Map<string, string>> {
   const map = new Map<string, string>();
   try {
@@ -105,6 +114,7 @@ async function readLockVersions(root: string): Promise<Map<string, string>> {
   return map;
 }
 
+/** Queries the OSV.dev API for known vulnerabilities in a single package at a specific version. */
 async function queryOsv(dep: ResolvedDep): Promise<OsvVuln[]> {
   const res = await fetch(OSV_QUERY_URL, {
     method: "POST",
@@ -119,6 +129,10 @@ async function queryOsv(dep: ResolvedDep): Promise<OsvVuln[]> {
   return data.vulns ?? [];
 }
 
+/**
+ * Resolves all dependencies in the project and queries OSV.dev for known vulnerabilities.
+ * Queries are batched to limit concurrent network requests.
+ */
 export async function scanDependencies(root: string): Promise<Finding[]> {
   const deps = await resolveDependencies(root);
   const findings: Finding[] = [];
