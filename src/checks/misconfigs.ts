@@ -256,10 +256,15 @@ function astCheckTLS(ast: TSESTree.Program, relPath: string, lines: string[]): F
 
   for (const node of findAll<TSESTree.AssignmentExpression>(ast, "AssignmentExpression")) {
     const { left, right } = node;
+    // Dot form (property is an Identifier) and bracket form
+    // (process.env["NODE_TLS_REJECT_UNAUTHORIZED"], property is a Literal)
+    // are both real-world spellings — handle both.
     const targetsEnvVar =
       left.type === "MemberExpression" &&
-      left.property.type === "Identifier" &&
-      left.property.name === "NODE_TLS_REJECT_UNAUTHORIZED";
+      ((left.property.type === "Identifier" &&
+        left.property.name === "NODE_TLS_REJECT_UNAUTHORIZED") ||
+        (left.property.type === "Literal" &&
+          left.property.value === "NODE_TLS_REJECT_UNAUTHORIZED"));
     const isZero =
       right.type === "Literal" && (right.value === "0" || right.value === 0);
 

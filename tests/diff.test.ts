@@ -77,6 +77,46 @@ test("--diff <ref> includes files changed since the ref", async () => {
   }
 });
 
+test("--diff skips the committed-env check when no .env file changed", async () => {
+  const dir = await makeRepo();
+  try {
+    // A committed .env exists from before — unrelated to the current diff.
+    await writeFile(path.join(dir, ".env"), "SECRET=abc\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-m", "baseline with env");
+
+    // Change only a source file.
+    await writeFile(path.join(dir, "app.js"), "const ok = 1;\n");
+
+    const result = await scan(dir, { skipDependencies: true, diff: {} });
+    assert.ok(
+      result.findings.every((f) => f.ruleId !== "misconfig.committed-env-file"),
+      "pre-existing committed .env must not leak into an unrelated diff",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("--diff runs the committed-env check when a .env file changed", async () => {
+  const dir = await makeRepo();
+  try {
+    // Commit a .env then modify it — the change puts .env in the diff set.
+    await writeFile(path.join(dir, ".env"), "SECRET=abc\n");
+    git(dir, "add", "-A");
+    git(dir, "commit", "-m", "add env");
+    await writeFile(path.join(dir, ".env"), "SECRET=xyz\n");
+
+    const result = await scan(dir, { skipDependencies: true, diff: {} });
+    assert.ok(
+      result.findings.some((f) => f.ruleId === "misconfig.committed-env-file"),
+      "a changed tracked .env must be reported in diff mode",
+    );
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("--diff skips the dependency check when no manifest changed", async () => {
   const dir = await makeRepo();
   try {

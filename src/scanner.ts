@@ -173,13 +173,21 @@ export async function scan(
   for await (const file of walk(absRoot, { skipDirs })) {
     const ext = path.extname(file).toLowerCase();
     const base = path.basename(file);
-    const dockerfile = base === "Dockerfile" || base.startsWith("Dockerfile.") || ext === ".dockerfile";
-    const relPathEarly = path.relative(absRoot, file).split(path.sep).join("/");
+    // Case-insensitive: `docker build` accepts a lowercase `dockerfile` (and any
+    // casing via -f), so a basename-exact match would silently skip those files.
+    const baseLower = base.toLowerCase();
+    const dockerfile =
+      baseLower === "dockerfile" || baseLower.startsWith("dockerfile.") || ext === ".dockerfile";
+    const relPath = path.relative(absRoot, file).split(path.sep).join("/");
     const ghaWorkflow =
-      relPathEarly.startsWith(".github/workflows/") &&
+      relPath.startsWith(".github/workflows/") &&
       (ext === ".yml" || ext === ".yaml");
     // Read source/config files, dotenv-style files, Dockerfiles, and GHA workflows.
     if (!SCANNABLE_EXT.has(ext) && !base.startsWith(".env") && !dockerfile) continue;
+
+    // In diff mode, skip unchanged files before paying for the stat + read —
+    // a 2-file diff in a large tree shouldn't do full-tree I/O.
+    if (changedFiles && !changedFiles.has(relPath)) continue;
 
     try {
       const info = await stat(file);
@@ -195,19 +203,20 @@ export async function scan(
       continue;
     }
 
-    const relPath = relPathEarly;
-
-    // In diff mode, skip files that haven't changed.
-    if (changedFiles && !changedFiles.has(relPath)) continue;
-
     // Store lines for inline suppression checks.
     if (!options.noIgnore) {
       fileLines.set(relPath, content.split(/\r?\n/));
     }
 
     findings.push(...scanSecrets(relPath, content));
-    findings.push(...scanMisconfigs(relPath, content));
-    if (dockerfile) findings.push(...scanDockerfile(relPath, content));
+    if (dockerfile) {
+      // scanMisconfigs has an internal JS/TS extension guard, so calling it for
+      // a Dockerfile is always a no-op — and any future Dockerfile rule added to
+      // misconfigs.ts would silently never fire. Route exclusively instead.
+      findings.push(...scanDockerfile(relPath, content));
+    } else {
+      findings.push(...scanMisconfigs(relPath, content));
+    }
     if (ghaWorkflow) findings.push(...scanGitHubActions(relPath, content));
     filesScanned++;
   }
@@ -221,13 +230,23 @@ export async function scan(
   if (!options.skipDependencies && manifestChanged) {
     try {
       findings.push(...(await scanDependencies(absRoot)));
-    } catch {
-      // Network failure shouldn't abort the whole scan.
+    } catch (err) {
+      // A check failure shouldn't abort the whole scan, but staying silent
+      // makes a broken run indistinguishable from a clean one — warn on stderr.
+      const msg = err instanceof Error ? err.message : String(err);
+      console.error(`[node-sec-scanner] dependency check failed: ${msg}`);
     }
   }
 
-  // IaC / cloud misconfig checks — repo-level, run unconditionally.
-  findings.push(...(await scanTrackedEnvFiles(absRoot)));
+  // Committed-env check — repo-level. In diff mode, mirror the manifest gate:
+  // only run when a .env* file is among the changed files, otherwise the scan
+  // would report pre-existing committed .env files unrelated to the diff.
+  const envFileChanged =
+    !changedFiles ||
+    [...changedFiles].some((f) => (f.split("/").pop() ?? "").startsWith(".env"));
+  if (envFileChanged) {
+    findings.push(...(await scanTrackedEnvFiles(absRoot)));
+  }
 
   // Apply .scannerignore and inline scanner-ignore suppressions.
   const { kept, suppressedFindings } = options.noIgnore

@@ -143,6 +143,21 @@ test("dockerfile: does not flag FROM pinned by digest", () => {
   assert.equal(f.length, 0);
 });
 
+test("dockerfile: FROM --platform flag is not parsed as the image name", () => {
+  // A pinned image behind the flag must not be flagged…
+  const pinned = scanDockerfile(
+    "Dockerfile",
+    "FROM --platform=linux/amd64 node:20.11\nUSER 1001\n",
+  ).filter((x) => x.ruleId === "misconfig.dockerfile-latest-tag");
+  assert.equal(pinned.length, 0);
+  // …while an unpinned image behind the flag still is.
+  const unpinned = scanDockerfile(
+    "Dockerfile",
+    "FROM --platform=linux/amd64 node\nUSER 1001\n",
+  ).filter((x) => x.ruleId === "misconfig.dockerfile-latest-tag");
+  assert.equal(unpinned.length, 1);
+});
+
 test("dockerfile: does not flag FROM scratch", () => {
   const findings = scanDockerfile("Dockerfile", "FROM scratch\nUSER 1001\n");
   const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-latest-tag");
@@ -239,6 +254,37 @@ test("dockerfile: does not flag ENV with non-secret key name", () => {
   );
   const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-env-secret");
   assert.equal(f.length, 0);
+});
+
+test("dockerfile: ENV value with an embedded key=value substring is not flagged", () => {
+  const findings = scanDockerfile(
+    "Dockerfile",
+    "FROM node:20\nUSER 1001\nENV BUILD_OPTS=--api_key=x\n",
+  );
+  const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-env-secret");
+  assert.equal(f.length, 0, "key=value inside a value must not fire");
+});
+
+test("dockerfile: secret pair among multiple ENV pairs is still flagged", () => {
+  const findings = scanDockerfile(
+    "Dockerfile",
+    "FROM node:20\nUSER 1001\nENV PORT=3000 API_KEY=s3cr3t\n",
+  );
+  const f = findings.filter((x) => x.ruleId === "misconfig.dockerfile-env-secret");
+  assert.equal(f.length, 1);
+});
+
+test("lowercase dockerfile filename is scanned", async () => {
+  const dir = await mkdtemp(path.join(os.tmpdir(), "scanner-dockerfile-"));
+  try {
+    await writeFile(path.join(dir, "dockerfile"), "FROM node\n");
+    const result = await scan(dir, { skipDependencies: true });
+    const f = result.findings.filter((x) => x.ruleId === "misconfig.dockerfile-latest-tag");
+    assert.equal(f.length, 1, "lowercase dockerfile must be routed to the Dockerfile check");
+    assert.equal(result.filesScanned, 1);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
 });
 
 // ── scanGitHubActions ─────────────────────────────────────────────────────────

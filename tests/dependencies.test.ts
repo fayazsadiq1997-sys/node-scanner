@@ -101,6 +101,39 @@ test("deduplicates identical name@version pairs across nested paths", async () =
   }
 });
 
+test("skips non-semver specifiers instead of querying OSV with them", async () => {
+  const dir = await makeProject({
+    "package.json": JSON.stringify({
+      name: "fixture",
+      dependencies: {
+        lodash: "^4.17.20",
+        a: "workspace:*",
+        b: "file:../lib",
+        c: "*",
+        d: ">=1 <2",
+        e: "git+https://github.com/x/y.git",
+        f: "1 || 2",
+      },
+    }),
+  });
+  try {
+    const deps = await resolveDependencies(dir);
+    assert.deepEqual(deps, [{ name: "lodash", version: "4.17.20" }]);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
+test("malformed package.json resolves no dependencies instead of throwing", async () => {
+  const dir = await makeProject({ "package.json": "{ this is not json" });
+  try {
+    const deps = await resolveDependencies(dir);
+    assert.deepEqual(deps, []);
+  } finally {
+    await rm(dir, { recursive: true, force: true });
+  }
+});
+
 test("falls back to declared dependencies when there is no lockfile", async () => {
   const dir = await makeProject({
     "package.json": JSON.stringify({

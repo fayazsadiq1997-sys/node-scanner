@@ -13,6 +13,7 @@ interface SecretRule {
   ruleId: string;
   title: string;
   severity: Finding["severity"];
+  /** Must carry the `g` flag — scanning uses matchAll to find every occurrence on a line. */
   regex: RegExp;
   remediation: string;
 }
@@ -22,7 +23,7 @@ const RULES: SecretRule[] = [
     ruleId: "secret.aws-access-key",
     title: "AWS access key ID",
     severity: "critical",
-    regex: /\bAKIA[0-9A-Z]{16}\b/,
+    regex: /\bAKIA[0-9A-Z]{16}\b/g,
     remediation:
       "Rotate the key immediately in AWS IAM and load credentials from environment variables or the AWS SDK credential chain.",
   },
@@ -30,7 +31,7 @@ const RULES: SecretRule[] = [
     ruleId: "secret.private-key",
     title: "Private key material",
     severity: "critical",
-    regex: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/,
+    regex: /-----BEGIN (?:RSA |EC |OPENSSH |DSA |PGP )?PRIVATE KEY-----/g,
     remediation:
       "Remove the key from source control, rotate it, and store it in a secrets manager (AWS Secrets Manager, Vault).",
   },
@@ -38,7 +39,7 @@ const RULES: SecretRule[] = [
     ruleId: "secret.generic-api-key",
     title: "Generic API key assignment",
     severity: "high",
-    regex: /\bapi[_-]?key\b\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/i,
+    regex: /\bapi[_-]?key\b\s*[:=]\s*['"][A-Za-z0-9_\-]{16,}['"]/gi,
     remediation:
       "Move the key to an environment variable and reference it via process.env.",
   },
@@ -46,7 +47,7 @@ const RULES: SecretRule[] = [
     ruleId: "secret.jwt-secret",
     title: "Hardcoded JWT secret",
     severity: "high",
-    regex: /\bjwt[_-]?secret\b\s*[:=]\s*['"][^'"]{8,}['"]/i,
+    regex: /\bjwt[_-]?secret\b\s*[:=]\s*['"][^'"]{8,}['"]/gi,
     remediation:
       "Store the JWT signing secret in an environment variable; never commit it.",
   },
@@ -54,7 +55,7 @@ const RULES: SecretRule[] = [
     ruleId: "secret.hardcoded-password",
     title: "Hardcoded password assignment",
     severity: "medium",
-    regex: /\bpassword\b\s*[:=]\s*['"][^'"]{6,}['"]/i,
+    regex: /\bpassword\b\s*[:=]\s*['"][^'"]{6,}['"]/gi,
     remediation:
       "Do not hardcode passwords. Inject them via environment variables or a secrets manager.",
   },
@@ -62,7 +63,7 @@ const RULES: SecretRule[] = [
     ruleId: "secret.bearer-token",
     title: "Hardcoded bearer token",
     severity: "high",
-    regex: /\bBearer\s+[A-Za-z0-9_\-\.]{20,}/,
+    regex: /\bBearer\s+[A-Za-z0-9_\-\.]{20,}/g,
     remediation:
       "Remove the token from source and supply it at runtime from secure storage.",
   },
@@ -86,8 +87,9 @@ export function scanSecrets(relPath: string, content: string): Finding[] {
   for (let i = 0; i < lines.length; i++) {
     const line = lines[i];
     for (const rule of RULES) {
-      const m = rule.regex.exec(line);
-      if (m) {
+      // matchAll (not a single exec) so a line carrying two secrets yields two
+      // findings instead of silently dropping the second.
+      for (const m of line.matchAll(rule.regex)) {
         findings.push({
           ruleId: rule.ruleId,
           category: "secret",

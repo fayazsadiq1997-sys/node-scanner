@@ -42,6 +42,15 @@ function cleanVersion(raw: string): string {
 }
 
 /**
+ * A concrete-ish version after range cleaning: "4", "4.17", or "4.17.21",
+ * optionally with a prerelease/build suffix. Specifiers that survive cleaning
+ * but aren't versions at all (`workspace:*`, `file:../lib`, `*`, `1 || 2`,
+ * `git+https://...`) would reach OSV verbatim, return nothing, and make an
+ * unscanned package look clean — those are skipped with a warning instead.
+ */
+const CONCRETE_VERSION_RE = /^\d+(?:\.\d+){0,2}(?:[-+][0-9A-Za-z.-]+)?$/;
+
+/**
  * CVSS v3.x base-metric weights, from the CVSS v3.1 specification (section 7.4).
  * Needed because OSV's severity[].score field holds the CVSS *vector string*
  * (e.g. "CVSS:3.1/AV:N/AC:L/..."), not a numeric score — the base score has to
@@ -153,15 +162,41 @@ export async function resolveDependencies(root: string): Promise<ResolvedDep[]> 
     return []; // No package.json — nothing to check.
   }
 
-  const pkg = JSON.parse(pkgRaw) as {
+  let pkg: {
     dependencies?: Record<string, string>;
     devDependencies?: Record<string, string>;
   };
+  try {
+    pkg = JSON.parse(pkgRaw);
+  } catch (err) {
+    // Without this warning a malformed package.json is indistinguishable from
+    // a project with no dependencies — the scan would just look clean.
+    const msg = err instanceof Error ? err.message : String(err);
+    console.error(
+      `[node-sec-scanner] dependency check skipped: could not parse package.json (${msg})`,
+    );
+    return [];
+  }
+
   const declared = { ...pkg.dependencies, ...pkg.devDependencies };
-  return Object.entries(declared).map(([name, range]) => ({
-    name,
-    version: cleanVersion(range),
-  }));
+  const deps: ResolvedDep[] = [];
+  const skipped: string[] = [];
+  for (const [name, range] of Object.entries(declared)) {
+    const version = cleanVersion(range);
+    if (CONCRETE_VERSION_RE.test(version)) {
+      deps.push({ name, version });
+    } else {
+      skipped.push(`${name}@${range}`);
+    }
+  }
+  if (skipped.length > 0) {
+    console.error(
+      `[node-sec-scanner] dependency check: skipped ${skipped.length} package(s) with ` +
+        `non-semver specifiers OSV cannot resolve (${skipped.slice(0, 5).join(", ")}` +
+        `${skipped.length > 5 ? ", …" : ""}); add a lockfile to scan them at exact versions.`,
+    );
+  }
+  return deps;
 }
 
 /**

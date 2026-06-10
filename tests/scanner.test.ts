@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import path from "node:path";
 import { scan } from "../src/scanner";
 import { scanMisconfigs } from "../src/checks/misconfigs";
+import { scanSecrets } from "../src/checks/secrets";
 
 const FIXTURE = path.join(__dirname, "fixtures", "vulnerable-app");
 
@@ -42,6 +43,25 @@ test("detects exec bound via require-then-member form (DVNA pattern)", () => {
     ruleIds.includes("misconfig.child-process-exec"),
     "should flag exec() bound via require('child_process').exec",
   );
+});
+
+test("detects bracket-notation NODE_TLS_REJECT_UNAUTHORIZED assignment", () => {
+  // process.env["..."] is a computed Literal property, not an Identifier —
+  // regression for the AST check only handling the dot form.
+  const src = 'process.env["NODE_TLS_REJECT_UNAUTHORIZED"] = "0";\n';
+  const ruleIds = scanMisconfigs("app.js", src).map((f) => f.ruleId);
+  assert.ok(
+    ruleIds.includes("misconfig.tls-reject-disabled"),
+    "bracket-notation env assignment should be flagged",
+  );
+});
+
+test("two secrets on one line yield two findings", () => {
+  const line = 'const a = "AKIAABCDEFGHIJKLMNOP", b = "AKIAQRSTUVWXYZABCDEF";\n';
+  const findings = scanSecrets("config.js", line).filter(
+    (f) => f.ruleId === "secret.aws-access-key",
+  );
+  assert.equal(findings.length, 2, "every occurrence on a line must be reported");
 });
 
 test("redacts secret values in output", async () => {

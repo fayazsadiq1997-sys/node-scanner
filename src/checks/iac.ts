@@ -134,7 +134,9 @@ export function scanDockerfile(relPath: string, content: string): Finding[] {
     const lineNum = i + 1;
 
     // ── FROM: unpinned base image ────────────────────────────────────────────
-    const fromMatch = line.match(/^FROM\s+(\S+)/i);
+    // Skip leading --flags (e.g. `FROM --platform=linux/amd64 node:20`) so a
+    // flag token is never mistaken for the image name.
+    const fromMatch = line.match(/^FROM\s+(?:--\S+\s+)*(\S+)/i);
     if (fromMatch) {
       // New build stage — only the final stage's USER matters at runtime.
       hasNonRootUser = false;
@@ -178,8 +180,11 @@ export function scanDockerfile(relPath: string, content: string): Finding[] {
       // Detect form: new (KEY=VALUE) vs old (KEY VALUE)
       const firstToken = envContent.split(/\s+/)[0];
       if (firstToken.includes("=")) {
-        // New form — may have multiple KEY=VALUE pairs on one line
-        for (const m of envContent.matchAll(/([A-Za-z_][A-Za-z0-9_]*)=(\S*)/g)) {
+        // New form — may have multiple KEY=VALUE pairs on one line. Each key
+        // must sit at the start of the line or after whitespace; without the
+        // anchor, a KEY=VALUE substring embedded in a value fires a false
+        // positive (e.g. `ENV BUILD_OPTS=--api_key=x`).
+        for (const m of envContent.matchAll(/(?:^|\s)([A-Za-z_][A-Za-z0-9_]*)=(\S*)/g)) {
           const [, key, value] = m;
           if (SECRET_KEY_RE.test(key) && looksLikeSecretValue(value)) {
             findings.push({
